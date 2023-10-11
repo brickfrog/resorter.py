@@ -9,7 +9,9 @@ import numpy as np
 import pandas as pd
 
 
-def parse_input(df: pd.DataFrame) -> Tuple[List[Union[int, str]], Optional[Dict[Union[int, str], float]]]:
+def parse_input(
+    df: pd.DataFrame,
+) -> Tuple[List[Union[int, str]], Optional[Dict[Union[int, str], float]]]:
     """
     Parse the input dataframe to separate items and scores.
     """
@@ -21,6 +23,7 @@ def parse_input(df: pd.DataFrame) -> Tuple[List[Union[int, str]], Optional[Dict[
         scores = None  # No scores provided
     return items, scores
 
+
 def determine_queries(items: List[Union[int, str]], args_queries: Optional[int]) -> int:
     """
     Determine the number of queries based on the list length and user input.
@@ -30,7 +33,10 @@ def determine_queries(items: List[Union[int, str]], args_queries: Optional[int])
     list_length = len(items)
     return int(ceil(list_length * np.log(list_length) + 1))
 
-def generate_bin_edges(data: List[float], levels: Optional[int] = None, quantiles: Optional[int] = None) -> Optional[np.ndarray]:
+
+def generate_bin_edges(
+    data: List[float], levels: Optional[int] = None, quantiles: Optional[int] = None
+) -> Optional[np.ndarray]:
     if quantiles is not None:
         return np.quantile(data, np.linspace(0, 1, quantiles + 1))
     elif levels is not None:
@@ -38,7 +44,10 @@ def generate_bin_edges(data: List[float], levels: Optional[int] = None, quantile
     else:
         return None
 
-def assign_custom_quantiles(sorted_ranks: Dict[Union[int, str], float], quantile_cutoffs: List[float]) -> Dict[Union[int, str], int]:
+
+def assign_custom_quantiles(
+    sorted_ranks: Dict[Union[int, str], float], quantile_cutoffs: List[float]
+) -> Dict[Union[int, str], int]:
     sorted_values = [val for _, val in sorted_ranks.items()]
     num_items = len(sorted_values)
     cutoff_positions = [int(c * num_items) for c in quantile_cutoffs]
@@ -50,7 +59,10 @@ def assign_custom_quantiles(sorted_ranks: Dict[Union[int, str], float], quantile
         quantiles[key] = len(quantile_cutoffs) - quantile_label
     return quantiles
 
-def assign_levels(sorted_ranks: Dict[Union[int, str], float], num_levels: int) -> Dict[Union[int, str], int]:
+
+def assign_levels(
+    sorted_ranks: Dict[Union[int, str], float], num_levels: int
+) -> Dict[Union[int, str], int]:
     total_items = len(sorted_ranks)
     items_per_level = total_items // num_levels
     remainder = total_items % num_levels
@@ -80,14 +92,18 @@ class Config:
 
 
 class BradleyTerryModel:
-    def __init__(self, items: List[Union[int, str]], scores: Optional[Dict[Union[int, str], float]] = None) -> None:
+    def __init__(
+        self,
+        items: List[Union[int, str]],
+        scores: Optional[Dict[Union[int, str], float]] = None,
+    ) -> None:
         self.items: List[Union[int, str]] = items
         self.alpha_beta: Dict[Union[int, str], Tuple[float, float]]
         if scores:
             self.alpha_beta = {item: (score, 1) for item, score in scores.items()}
         else:
             self.alpha_beta = {item: (1, 1) for item in items}
-        
+
         self.in_sigtstp_state: bool = False
         signal.signal(signal.SIGINT, self.sigint_handler)
         signal.signal(signal.SIGTSTP, self.sigtstp_handler)
@@ -113,18 +129,17 @@ class BradleyTerryModel:
             return
         else:
             print("\nCtrl+C pressed. Cleaning up before exit.")
-            sys.exit(0) 
+            sys.exit(0)
 
-    def bayesian_update(self, alpha: float, beta: float, win: float, lose: float) -> Tuple[float, float]:
+    def bayesian_update(
+        self, alpha: float, beta: float, win: float, lose: float
+    ) -> Tuple[float, float]:
         return alpha + win, beta + lose
 
     def ask_question(self, item_a: Union[int, str], item_b: Union[int, str]) -> int:
         while True:
             try:
-                print(f"Compare {item_a} to {item_b}")
-                response = input(
-                    "1 for A better, 2 for B better, 3 for tie, p for print estimates, q to quit: "
-                )
+                response = input(f"Is '{item_a}' greater than '{item_b}'? ")
                 if response in ["1", "2", "3"]:
                     self.update_single_query(item_a, item_b, int(response))
                     return int(response)
@@ -138,8 +153,10 @@ class BradleyTerryModel:
             except ValueError:
                 print("Invalid input. Please enter 1, 2, 3, or p.")
 
-    def update_single_query(self, item_a: Union[int, str], item_b: Union[int, str], response: int) -> None:
-        winners = [(1, 0), (0, 1), (0.5, 0.5)]
+    def update_single_query(
+        self, item_a: Union[int, str], item_b: Union[int, str], response: int
+    ) -> None:
+        winners = [(1, 0), (0.5, 0.5), (0, 1)]
         win_a, win_b = winners[response - 1]
 
         for item, win, lose in [(item_a, win_a, win_b), (item_b, win_b, win_a)]:
@@ -152,8 +169,14 @@ class BradleyTerryModel:
             se = standard_error(alpha, beta)
             print(f"{item}: rank = {round(rank,2)}, σ = {round(se,4)}")
 
-    def generate_comparison_data(self, queries: int) -> List[Tuple[Union[int, str], Union[int, str], float, float]]:
+    def generate_comparison_data(
+        self, queries: int
+    ) -> List[Tuple[Union[int, str], Union[int, str], float, float]]:
         comparison_data = []
+        # TODO: implement skip logic
+        print(
+            "Comparison commands: 1=yes, 2=tied, 3=second is better, p=print estimates, q=quit"
+        )
         for _ in range(queries):
             item_a, item_b = random.sample(self.items, 2)
             response = self.ask_question(item_a, item_b)
@@ -163,7 +186,10 @@ class BradleyTerryModel:
             comparison_data.append((item_a, item_b, win_a, win_b))
         return comparison_data
 
-    def update_ranks(self, comparison_data: List[Tuple[Union[int, str], Union[int, str], float, float]]) -> None:
+    def update_ranks(
+        self,
+        comparison_data: List[Tuple[Union[int, str], Union[int, str], float, float]],
+    ) -> None:
         for item_a, item_b, win_a, win_b in comparison_data:
             alpha_a, beta_a = self.alpha_beta[item_a]
             alpha_b, beta_b = self.alpha_beta[item_b]
@@ -242,19 +268,29 @@ def main() -> None:
         model.print_estimates()
 
     ranks: Dict[Any, float] = model.compute_ranks()
-    sorted_ranks = {k: v for k, v in sorted(ranks.items(), key=lambda x: x[1], reverse=True)}
+    sorted_ranks = {
+        k: v for k, v in sorted(ranks.items(), key=lambda x: x[1], reverse=True)
+    }
 
     if args.levels:
         levels = assign_levels(sorted_ranks, args.levels)
-        output_data = pd.DataFrame({"Item": list(levels.keys()), "Quantiles": list(levels.values())})
+        output_data = pd.DataFrame(
+            {"Item": list(levels.keys()), "Quantiles": list(levels.values())}
+        )
     elif args.quantiles:
         quantile_cutoffs = [float(x) for x in args.quantiles.split(" ")]
         quantiles = assign_custom_quantiles(sorted_ranks, quantile_cutoffs)
-        output_data = pd.DataFrame({"Item": list(quantiles.keys()), "Quantiles": list(quantiles.values())})
+        output_data = pd.DataFrame(
+            {"Item": list(quantiles.keys()), "Quantiles": list(quantiles.values())}
+        )
     else:
         sorted_ranks = {k: v for k, v in reversed(list(sorted_ranks.items()))}
-        level_assignments = {item: rank + 1 for rank, (item, _) in enumerate(sorted_ranks.items())}
-        output_data = pd.DataFrame(list(level_assignments.items()), columns=["Item", "Quantiles"])
+        level_assignments = {
+            item: rank + 1 for rank, (item, _) in enumerate(sorted_ranks.items())
+        }
+        output_data = pd.DataFrame(
+            list(level_assignments.items()), columns=["Item", "Quantiles"]
+        )
 
     output_data = output_data.sort_values(by=["Quantiles"], ascending=False)
     output_data.to_csv(args.output, index=False)
