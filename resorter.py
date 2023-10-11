@@ -114,7 +114,7 @@ class BradleyTerryModel:
         else:
             print("\nCtrl+C pressed. Cleaning up before exit.")
             sys.exit(0) 
-            
+
     def bayesian_update(self, alpha: float, beta: float, win: float, lose: float) -> Tuple[float, float]:
         return alpha + win, beta + lose
 
@@ -183,13 +183,41 @@ class BradleyTerryModel:
 
 def main() -> None:
     parser: argparse.ArgumentParser = argparse.ArgumentParser()
-    parser.add_argument("--input", required=True, type=str, help="...")
-    parser.add_argument("--output", required=True, type=str, help="...")
-    parser.add_argument("--queries", default=None, type=int, help="...")
-    parser.add_argument("--levels", default=None, type=int, help="...")
-    parser.add_argument("--quantiles", default=None, type=str, help="...")
-    parser.add_argument("--progress", action="store_true", help="...")
-    
+    parser.add_argument(
+        "--input",
+        required=True,
+        help="input file: a CSV file of items to sort: one per line, with up to two columns. (eg. both 'Akira' and 'Akira, 10' are valid)",
+    )
+    parser.add_argument(
+        "--output",
+        required=True,
+        help="output file: a file to write the final results to. Default: printing to stdout.",
+    )
+    parser.add_argument(
+        "--queries",
+        default=None,
+        type=int,
+        help="Maximum number of questions to ask the user; defaults to N*log(N) comparisons. If already rated, 𝒪 (n) is a good max, but the more items and more levels in the scale and more accuracy desired, the more comparisons are needed.",
+    )
+    parser.add_argument(
+        "--levels",
+        default=None,
+        type=int,
+        help="The highest level; rated items will be discretized into 1–l levels, so l=5 means items are bucketed into 5 levels: [1,2,3,4,5], etc. Maps onto quantiles; valid values: 2–100.",
+    )
+    parser.add_argument(
+        "--quantiles",
+        default=None,
+        type=str,
+        help="What fraction to allocate to each level; space-separated; overrides `--levels`. This allows making one level of ratings narrower (and more precise) than the others, at their expense; for example, one could make 3-star ratings rarer with quantiles like `--quantiles '0 0.25 0.8 1'`. Default: uniform distribution (1--5 → '0.0 0.2 0.4 0.6 0.8 1.0').",
+    )
+    parser.add_argument(
+        "--progress",
+        action="store_true",
+        help="Print the mean standard error to stdout",
+    )
+    # TODO: no-scale / verbose
+
     args: argparse.Namespace = parser.parse_args()
     config: Config = Config(args)
 
