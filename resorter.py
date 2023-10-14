@@ -29,7 +29,11 @@ def determine_queries(items: List[Union[int, str]], args_queries: Optional[int])
     """
     if args_queries is not None:
         return args_queries
+
     list_length = len(items)
+    if list_length == 0:
+        return 0
+
     return int(ceil(list_length * np.log(list_length) + 1))
 
 
@@ -49,13 +53,20 @@ def assign_custom_quantiles(
 ) -> Dict[Union[int, str], int]:
     sorted_values = [val for _, val in sorted_ranks.items()]
     num_items = len(sorted_values)
+
     cutoff_positions = [int(c * num_items) for c in quantile_cutoffs]
+
     quantiles = {}
-    quantile_label = 1
+    quantile_label = 0
+
     for i, (key, _) in enumerate(sorted_ranks.items()):
-        if i >= cutoff_positions[quantile_label]:
+        if (
+            quantile_label < len(cutoff_positions) - 1
+            and i >= cutoff_positions[quantile_label]
+        ):
             quantile_label += 1
-        quantiles[key] = len(quantile_cutoffs) - quantile_label
+        quantiles[key] = quantile_label + 1
+
     return quantiles
 
 
@@ -115,7 +126,9 @@ class BradleyTerryModel:
     def ask_question(self, item_a: Union[int, str], item_b: Union[int, str]) -> int:
         while True:
             try:
-                response = input(f"Is '{click.style(item_a, fg='green')}' greater than '{click.style(item_b, fg='green')}'? ")
+                response = input(
+                    f"Is '{click.style(item_a, fg='green')}' greater than '{click.style(item_b, fg='green')}'? "
+                )
                 if response in ["1", "2", "3"]:
                     self.update_single_query(item_a, item_b, int(response))
                     return int(response)
@@ -153,13 +166,12 @@ class BradleyTerryModel:
             "Comparison commands: 1=yes, 2=tied, 3=second is better, p=print estimates, q=quit"
         )
         for _ in range(queries):
-            item_a = random.choice(self.items)
-            item_b = random.choice(self.items)
-            while item_a == item_b:
-                item_b = random.choice(self.items)
+            item_a, item_b = random.sample(self.items, 2)
+            while item_a == item_b:  # Ensure no item is compared with itself
+                item_a, item_b = random.sample(self.items, 2)
             response = self.ask_question(item_a, item_b)
             win_a, win_b = (
-                (1, 0) if response == 1 else (0, 1) if response == 2 else (0.5, 0.5)
+                (1, 0) if response == 1 else (0, 1) if response == 3 else (0.5, 0.5)
             )
             comparison_data.append((item_a, item_b, win_a, win_b))
         return comparison_data
@@ -220,12 +232,17 @@ class BradleyTerryModel:
     help="Print the mean standard error to stdout",
 )
 def main(
-    input: str, output: str, queries: Optional[int], levels: Optional[int], quantiles: Optional[str], progress: bool
+    input: str,
+    output: str,
+    queries: Optional[int],
+    levels: Optional[int],
+    quantiles: Optional[str],
+    progress: bool,
 ) -> None:
     config: Config = Config(input, output, queries, levels, quantiles, progress)
 
     try:
-        df: pd.DataFrame = pd.read_csv(input, header=None, dtype=str)
+        df: pd.DataFrame = pd.read_csv(input, header=None, dtype=str, na_filter=False)
     except FileNotFoundError:
         print("Input file not found.")
         return
@@ -268,9 +285,9 @@ def main(
         output_data = pd.DataFrame(
             list(level_assignments.items()), columns=["Item", "Quantiles"]
         )
-    
+
     output_data = output_data.sort_values(by=["Quantiles"], ascending=False)
-    
+
     if not config.output:
         output_data.to_csv(sys.stdout, index=False)
     else:
