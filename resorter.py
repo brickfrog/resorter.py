@@ -142,7 +142,7 @@ class BradleyTerryModel:
         for item, (alpha, beta) in self.alpha_beta.items():
             rank = alpha / (alpha + beta)
             se = self.standard_error(alpha, beta)
-            print(f"{item}: rank = {round(rank,2)}, σ = {round(se,4)}")
+            print(f"{item}: rank = {rank:.2f}, σ = {se:.4f}")
 
     def generate_comparison_data(
         self, queries: int
