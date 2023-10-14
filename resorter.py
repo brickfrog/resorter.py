@@ -1,5 +1,6 @@
-import argparse
+import click
 import random
+import sys
 from math import ceil, sqrt
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -80,13 +81,13 @@ def assign_levels(
 
 
 class Config:
-    def __init__(self, args):
-        self.input = args.input
-        self.output = args.output
-        self.queries = args.queries
-        self.levels = args.levels
-        self.quantiles = args.quantiles
-        self.progress = args.progress
+    def __init__(self, input, output, queries, levels, quantiles, progress):
+        self.input = input
+        self.output = output
+        self.queries = queries
+        self.levels = levels
+        self.quantiles = quantiles
+        self.progress = progress
 
 
 class BradleyTerryModel:
@@ -114,7 +115,7 @@ class BradleyTerryModel:
     def ask_question(self, item_a: Union[int, str], item_b: Union[int, str]) -> int:
         while True:
             try:
-                response = input(f"Is '{item_a}' greater than '{item_b}'? ")
+                response = input(f"Is '{click.style(item_a, fg='green')}' greater than '{click.style(item_b, fg='green')}'? ")
                 if response in ["1", "2", "3"]:
                     self.update_single_query(item_a, item_b, int(response))
                     return int(response)
@@ -148,12 +149,14 @@ class BradleyTerryModel:
         self, queries: int
     ) -> List[Tuple[Union[int, str], Union[int, str], float, float]]:
         comparison_data = []
-        # TODO: implement skip logic
         print(
             "Comparison commands: 1=yes, 2=tied, 3=second is better, p=print estimates, q=quit"
         )
         for _ in range(queries):
-            item_a, item_b = random.sample(self.items, 2)
+            item_a = random.choice(self.items)
+            item_b = random.choice(self.items)
+            while item_a == item_b:
+                item_b = random.choice(self.items)
             response = self.ask_question(item_a, item_b)
             win_a, win_b = (
                 (1, 0) if response == 1 else (0, 1) if response == 2 else (0.5, 0.5)
@@ -182,48 +185,47 @@ class BradleyTerryModel:
         }
 
 
-def main() -> None:
-    parser: argparse.ArgumentParser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--input",
-        required=True,
-        help="input file: a CSV file of items to sort: one per line, with up to two columns. (eg. both 'Akira' and 'Akira, 10' are valid)",
-    )
-    parser.add_argument(
-        "--output",
-        required=True,
-        help="output file: a file to write the final results to. Default: printing to stdout.",
-    )
-    parser.add_argument(
-        "--queries",
-        default=None,
-        type=int,
-        help="Maximum number of questions to ask the user; defaults to N*log(N) comparisons. If already rated, 𝒪 (n) is a good max, but the more items and more levels in the scale and more accuracy desired, the more comparisons are needed.",
-    )
-    parser.add_argument(
-        "--levels",
-        default=None,
-        type=int,
-        help="The highest level; rated items will be discretized into 1–l levels, so l=5 means items are bucketed into 5 levels: [1,2,3,4,5], etc. Maps onto quantiles; valid values: 2–100.",
-    )
-    parser.add_argument(
-        "--quantiles",
-        default=None,
-        type=str,
-        help="What fraction to allocate to each level; space-separated; overrides `--levels`. This allows making one level of ratings narrower (and more precise) than the others, at their expense; for example, one could make 3-star ratings rarer with quantiles like `--quantiles '0 0.25 0.8 1'`. Default: uniform distribution (1--5 → '0.0 0.2 0.4 0.6 0.8 1.0').",
-    )
-    parser.add_argument(
-        "--progress",
-        action="store_true",
-        help="Print the mean standard error to stdout",
-    )
-    # TODO: no-scale / verbose
-
-    args: argparse.Namespace = parser.parse_args()
-    config: Config = Config(args)
+@click.command()
+@click.option(
+    "--input",
+    required=True,
+    help="input file: a CSV file of items to sort: one per line, with up to two columns. (eg. both 'Akira' and 'Akira, 10' are valid)",
+)
+@click.option(
+    "--output",
+    required=False,
+    help="output file: a file to write the final results to. Default: printing to stdout.",
+)
+@click.option(
+    "--queries",
+    default=None,
+    type=int,
+    help="Maximum number of questions to ask the user; defaults to N*log(N) comparisons. If already rated, 𝒪 (n) is a good max, but the more items and more levels in the scale and more accuracy desired, the more comparisons are needed.",
+)
+@click.option(
+    "--levels",
+    default=None,
+    type=int,
+    help="The highest level; rated items will be discretized into 1–l levels, so l=5 means items are bucketed into 5 levels: [1,2,3,4,5], etc. Maps onto quantiles; valid values: 2–100.",
+)
+@click.option(
+    "--quantiles",
+    default=None,
+    type=str,
+    help="What fraction to allocate to each level; space-separated; overrides `--levels`. This allows making one level of ratings narrower (and more precise) than the others, at their expense; for example, one could make 3-star ratings rarer with quantiles like `--quantiles '0 0.25 0.8 1'`. Default: uniform distribution (1--5 → '0.0 0.2 0.4 0.6 0.8 1.0').",
+)
+@click.option(
+    "--progress",
+    is_flag=True,
+    help="Print the mean standard error to stdout",
+)
+def main(
+    input: str, output: str, queries: Optional[int], levels: Optional[int], quantiles: Optional[str], progress: bool
+) -> None:
+    config: Config = Config(input, output, queries, levels, quantiles, progress)
 
     try:
-        df: pd.DataFrame = pd.read_csv(args.input, header=None)
+        df: pd.DataFrame = pd.read_csv(input, header=None, dtype=str)
     except FileNotFoundError:
         print("Input file not found.")
         return
@@ -233,13 +235,13 @@ def main() -> None:
     print(f"Number of queries: {queries}")
 
     model: BradleyTerryModel = BradleyTerryModel(items, scores)
-    if args.progress:
+    if config.progress:
         model.print_estimates()
 
     comparison_data = model.generate_comparison_data(queries)
     model.update_ranks(comparison_data)
 
-    if args.progress:
+    if config.progress:
         model.print_estimates()
 
     ranks: Dict[Any, float] = model.compute_ranks()
@@ -247,13 +249,13 @@ def main() -> None:
         k: v for k, v in sorted(ranks.items(), key=lambda x: x[1], reverse=True)
     }
 
-    if args.levels:
-        levels = assign_levels(sorted_ranks, args.levels)
+    if config.levels:
+        levels = assign_levels(sorted_ranks, config.levels)
         output_data = pd.DataFrame(
             {"Item": list(levels.keys()), "Quantiles": list(levels.values())}
         )
-    elif args.quantiles:
-        quantile_cutoffs = [float(x) for x in args.quantiles.split(" ")]
+    elif config.quantiles:
+        quantile_cutoffs = [float(x) for x in config.quantiles.split(" ")]
         quantiles = assign_custom_quantiles(sorted_ranks, quantile_cutoffs)
         output_data = pd.DataFrame(
             {"Item": list(quantiles.keys()), "Quantiles": list(quantiles.values())}
@@ -266,9 +268,13 @@ def main() -> None:
         output_data = pd.DataFrame(
             list(level_assignments.items()), columns=["Item", "Quantiles"]
         )
-
+    
     output_data = output_data.sort_values(by=["Quantiles"], ascending=False)
-    output_data.to_csv(args.output, index=False)
+    
+    if not config.output:
+        output_data.to_csv(sys.stdout, index=False)
+    else:
+        output_data.to_csv(output, index=False)
 
 
 if __name__ == "__main__":
