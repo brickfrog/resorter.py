@@ -135,24 +135,27 @@ class BradleyTerryModel:
     ) -> Tuple[float, float]:
         return alpha + win, beta + lose
 
-    def ask_question(self, item_a: Union[int, str], item_b: Union[int, str]) -> int:
+    def ask_question(self, item_a: Union[int, str], item_b: Union[int, str]) -> Union[int, str]:
         while True:
             try:
                 response = input(
-                    f"Is '{click.style(item_a, fg='green')}' greater than '{click.style(item_b, fg='green')}'? "
+                    f"Is '{click.style(item_a, fg='green')}' better than '{click.style(item_b, fg='green')}'? "
                 )
                 if response in ["1", "2", "3"]:
                     self.update_single_query(item_a, item_b, int(response))
                     return int(response)
+                elif response == "s":
+                    print("Skipping...")
+                    return "skip"
                 elif response == "p":
                     self.print_estimates()
                 elif response == "q":
                     print("Quitting...")
                     exit(0)
                 else:
-                    print("Invalid input. Please enter 1, 2, 3, or p.")
+                    print("Invalid input. Please enter 1, 2, 3, s, p, or q.")
             except ValueError:
-                print("Invalid input. Please enter 1, 2, 3, or p.")
+                print("Invalid input. Please enter 1, 2, 3, s, p, or q.")
 
     def update_single_query(
         self, item_a: Union[int, str], item_b: Union[int, str], response: int
@@ -175,11 +178,11 @@ class BradleyTerryModel:
     ) -> List[Tuple[Union[int, str], Union[int, str], float, float]]:
         comparison_data = []
         print(
-            "Comparison commands: 1=yes, 2=tied, 3=second is better, p=print estimates, q=quit"
+            "Comparison commands: 1=yes, 2=tied, 3=second is better, p=print estimates, s=skip question, q=quit"
         )
         for _ in range(queries):
             item_a, item_b = random.sample(self.items, 2)
-            while item_a == item_b:  # Ensure no item is compared with itself
+            while item_a == item_b:
                 item_a, item_b = random.sample(self.items, 2)
             response = self.ask_question(item_a, item_b)
             win_a, win_b = (
