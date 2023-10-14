@@ -3,9 +3,21 @@ import random
 import sys
 from math import ceil, sqrt
 from typing import Any, Dict, List, Optional, Tuple, Union
+import os
 
 import numpy as np
 import pandas as pd
+
+
+def read_input(data_input: str) -> pd.DataFrame:
+    """
+    Reads .csv into a dataframe, or splits a comma-separated string into a dataframe.
+    """
+    if os.path.exists(data_input) and data_input.endswith(".csv"):
+        return pd.read_csv(data_input, header=None, dtype=str, na_filter=False)
+
+    items = data_input.split(",")
+    return pd.DataFrame(items, columns=["Items"])
 
 
 def parse_input(
@@ -242,7 +254,7 @@ def main(
     config: Config = Config(input, output, queries, levels, quantiles, progress)
 
     try:
-        df: pd.DataFrame = pd.read_csv(input, header=None, dtype=str, na_filter=False)
+        df: pd.DataFrame = read_input(input)
     except FileNotFoundError:
         print("Input file not found.")
         return
