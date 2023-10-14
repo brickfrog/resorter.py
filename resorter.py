@@ -1,7 +1,5 @@
 import argparse
 import random
-import signal
-import sys
 from math import ceil, sqrt
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -104,32 +102,9 @@ class BradleyTerryModel:
         else:
             self.alpha_beta = {item: (1, 1) for item in items}
 
-        self.in_sigtstp_state: bool = False
-        signal.signal(signal.SIGINT, self.sigint_handler)
-        signal.signal(signal.SIGTSTP, self.sigtstp_handler)
-
     @staticmethod
     def standard_error(alpha: float, beta: float) -> float:
         return sqrt((alpha * beta) / ((alpha + beta) ** 2 * (alpha + beta + 1)))
-
-    def sigtstp_handler(self, signum: int, frame: Any) -> None:
-        if self.in_sigtstp_state:
-            print("\nCtrl+Z pressed again. Exiting.")
-            self.in_sigtstp_state = False
-            sys.exit(0)
-        else:
-            print(
-                "\nCtrl+Z pressed. You can either exit with q/Ctrl+Z with Ctrl+C or continue answering."
-            )
-            self.in_sigtstp_state = True
-
-    def sigint_handler(self, signum: int, frame: Any) -> None:
-        if self.in_sigtstp_state:
-            print("\nContinuing to answer questions...")
-            return
-        else:
-            print("\nCtrl+C pressed. Cleaning up before exit.")
-            sys.exit(0)
 
     def bayesian_update(
         self, alpha: float, beta: float, win: float, lose: float
