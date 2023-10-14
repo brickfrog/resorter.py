@@ -135,11 +135,13 @@ class BradleyTerryModel:
     ) -> Tuple[float, float]:
         return alpha + win, beta + lose
 
-    def ask_question(self, item_a: Union[int, str], item_b: Union[int, str]) -> Union[int, str]:
+    def ask_question(
+        self, item_a: Union[int, str], item_b: Union[int, str]
+    ) -> Union[int, str]:
         while True:
             try:
                 response = input(
-                    f"Is '{click.style(item_a, fg='green')}' better than '{click.style(item_b, fg='green')}'? "
+                    f"Is '{click.style(item_a, fg='green')}' better than '{click.style(item_b, fg='green')}'? " # noqa: E501
                 )
                 if response in ["1", "2", "3"]:
                     self.update_single_query(item_a, item_b, int(response))
@@ -178,7 +180,7 @@ class BradleyTerryModel:
     ) -> List[Tuple[Union[int, str], Union[int, str], float, float]]:
         comparison_data = []
         print(
-            "Comparison commands: 1=yes, 2=tied, 3=second is better, p=print estimates, s=skip question, q=quit"
+            "Comparison commands: 1=yes, 2=tied, 3=second is better, p=print estimates, s=skip question, q=quit" # noqa: E501
         )
         for _ in range(queries):
             item_a, item_b = random.sample(self.items, 2)
@@ -216,35 +218,35 @@ class BradleyTerryModel:
 @click.option(
     "--input",
     required=True,
-    help="input file: a CSV file of items to sort: one per line, with up to two columns. (eg. both 'Akira' and 'Akira, 10' are valid)",
+    help="input file: a CSV file of items to sort: one per line, with up to two columns. (eg. both 'Akira' and 'Akira, 10' are valid)", # noqa: E501
 )
 @click.option(
     "--output",
     required=False,
-    help="output file: a file to write the final results to. Default: printing to stdout.",
+    help="output file: a file to write the final results to. Default: printing to stdout.", # noqa: E501
 )
 @click.option(
     "--queries",
     default=None,
     type=int,
-    help="Maximum number of questions to ask the user; defaults to N*log(N) comparisons. If already rated, 𝒪 (n) is a good max, but the more items and more levels in the scale and more accuracy desired, the more comparisons are needed.",
+    help="Maximum number of questions to ask the user; defaults to N*log(N) comparisons. If already rated, 𝒪 (n) is a good max, but the more items and more levels in the scale and more accuracy desired, the more comparisons are needed.", # noqa: E501
 )
 @click.option(
     "--levels",
     default=None,
     type=int,
-    help="The highest level; rated items will be discretized into 1–l levels, so l=5 means items are bucketed into 5 levels: [1,2,3,4,5], etc. Maps onto quantiles; valid values: 2–100.",
+    help="The highest level; rated items will be discretized into 1–l levels, so l=5 means items are bucketed into 5 levels: [1,2,3,4,5], etc. Maps onto quantiles; valid values: 2–100.", # noqa: E501
 )
 @click.option(
     "--quantiles",
     default=None,
     type=str,
-    help="What fraction to allocate to each level; space-separated; overrides `--levels`. This allows making one level of ratings narrower (and more precise) than the others, at their expense; for example, one could make 3-star ratings rarer with quantiles like `--quantiles '0 0.25 0.8 1'`. Default: uniform distribution (1--5 → '0.0 0.2 0.4 0.6 0.8 1.0').",
+    help="What fraction to allocate to each level; space-separated; overrides `--levels`. This allows making one level of ratings narrower (and more precise) than the others, at their expense; for example, one could make 3-star ratings rarer with quantiles like `--quantiles '0 0.25 0.8 1'`. Default: uniform distribution (1--5 → '0.0 0.2 0.4 0.6 0.8 1.0').", # noqa: E501
 )
 @click.option(
     "--progress",
     is_flag=True,
-    help="Print the mean standard error to stdout",
+    help="Print the mean standard error to stdout", # noqa: E501
 )
 def main(
     input: str,
