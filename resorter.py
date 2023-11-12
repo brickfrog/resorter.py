@@ -122,9 +122,10 @@ class BradleyTerryModel:
         self.items: List[Union[int, str]] = items
         self.alpha_beta: Dict[Union[int, str], Tuple[float, float]]
         if scores:
-            self.alpha_beta = {item: (score, 1) for item, score in scores.items()}
+            self.alpha_beta = {item: (float(score), 1) for item, score in scores.items()}
         else:
             self.alpha_beta = {item: (1, 1) for item in items}
+
 
     @staticmethod
     def standard_error(alpha: float, beta: float) -> float:
