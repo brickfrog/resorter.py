@@ -14,7 +14,7 @@ import pandas as pd
 class Config:
     def __init__(
         self, input, output, queries, levels, quantiles, progress,
-        save_state, load_state, min_confidence, visualize
+        save_state, load_state, min_confidence, visualize, format='csv'
     ):
         self.input = input
         self.output = output
@@ -26,6 +26,7 @@ class Config:
         self.load_state = load_state
         self.min_confidence = min_confidence
         self.visualize = visualize
+        self.format = format
 
 
 def read_input(data_input: str) -> pd.DataFrame:
@@ -183,10 +184,20 @@ class BayesianPairwiseRanker:
         # Save state before update
         self.history.append((item_a, item_b, self.alpha_beta.copy()))
         
+        # Check consistency before updating
+        rank_a = self.alpha_beta[item_a][0] / sum(self.alpha_beta[item_a])
+        rank_b = self.alpha_beta[item_b][0] / sum(self.alpha_beta[item_b])
+        rank_diff = abs(rank_a - rank_b)
+        
+        if rank_diff > 0.7:  # Large difference in current rankings
+            if (response == 1 and rank_a < rank_b) or (response == 3 and rank_a > rank_b):
+                print("\nWarning: This comparison seems inconsistent with previous rankings!")
+                print("You might want to undo (u) and reconsider.")
+        
         winners = [(1, 0), (0.5, 0.5), (0, 1)]
         win_a, win_b = winners[response - 1]
 
-        self.iteration_count += 1  # Increment iteration counter
+        self.iteration_count += 1
         for item, win, lose in [(item_a, win_a, win_b), (item_b, win_b, win_a)]:
             alpha, beta = self.alpha_beta[item]
             self.alpha_beta[item] = self.bayesian_update(alpha, beta, win, lose, self.iteration_count)
@@ -268,6 +279,12 @@ class BayesianPairwiseRanker:
         
         i = 0
         while i < queries:
+            # Check if we've reached sufficient confidence
+            if hasattr(self, 'min_confidence'):
+                if not self.should_continue(self.min_confidence):
+                    print("\nReached confidence threshold - stopping early!")
+                    break
+            
             if self.history:
                 last_comparison = self.history[-1]
                 item_a, item_b = last_comparison[0], last_comparison[1]
@@ -428,6 +445,35 @@ class BayesianPairwiseRanker:
             bar_length = int(rank * 40)
             print(f"{str(item):<{max_name_len}} | {'#' * bar_length}{' ' * (40-bar_length)} | {rank:.2f}")
 
+    def export_rankings(self, format: str = 'csv') -> Union[str, Dict, pd.DataFrame]:
+        """Export rankings in various formats"""
+        ranks = self.compute_ranks()
+        confidences = self.get_ranking_confidence()
+        sorted_items = sorted(ranks.items(), key=lambda x: x[1], reverse=True)
+        
+        if format == 'json':
+            return {
+                'rankings': dict(sorted_items),
+                'confidences': confidences,
+                'metadata': {
+                    'total_comparisons': self.iteration_count,
+                    'mean_uncertainty': self.get_mean_uncertainty()
+                }
+            }
+        elif format == 'markdown':
+            lines = ["| Item | Rank | Confidence |", "|------|------|------------|"]
+            for item, rank in sorted_items:
+                lines.append(f"| {item} | {rank:.2f} | {confidences[item]:.2%} |")
+            return '\n'.join(lines)
+        elif format == 'csv':
+            return pd.DataFrame({
+                'Item': [item for item, _ in sorted_items],
+                'Rank': [rank for _, rank in sorted_items],
+                'Confidence': [confidences[item] for item, _ in sorted_items]
+            })
+        else:
+            raise ValueError(f"Unknown format: {format}")
+
 
 @click.command()
 @click.option(
@@ -484,6 +530,12 @@ class BayesianPairwiseRanker:
     is_flag=True,
     help="Show ASCII visualization of rankings",
 )
+@click.option(
+    "--format",
+    type=click.Choice(['csv', 'json', 'markdown']),
+    default='csv',
+    help="Output format for the rankings",
+)
 def main(
     input: str,
     output: str,
@@ -495,10 +547,11 @@ def main(
     load_state: Optional[str],
     min_confidence: float,
     visualize: bool,
+    format: str,
 ) -> None:
     config: Config = Config(
         input, output, queries, levels, quantiles, progress,
-        save_state, load_state, min_confidence, visualize
+        save_state, load_state, min_confidence, visualize, format
     )
     
     try:
@@ -513,6 +566,7 @@ def main(
 
     model: BayesianPairwiseRanker = BayesianPairwiseRanker(items, scores)
     model.show_progress = config.progress
+    model.min_confidence = config.min_confidence
     
     if config.progress:
         print("\nInitial state:")
@@ -551,10 +605,25 @@ def main(
 
     output_data = output_data.sort_values(by=["Quantiles"], ascending=False)
 
+    # Export in the requested format
+    output_data = model.export_rankings(format)
+    
     if not config.output:
-        output_data.to_csv(sys.stdout, index=False)
+        if format == 'json':
+            print(json.dumps(output_data, indent=2))
+        elif format == 'markdown':
+            print(output_data)
+        else:
+            output_data.to_csv(sys.stdout, index=False)
     else:
-        output_data.to_csv(output, index=False)
+        if format == 'json':
+            with open(output, 'w') as f:
+                json.dump(output_data, f, indent=2)
+        elif format == 'markdown':
+            with open(output, 'w') as f:
+                f.write(output_data)
+        else:
+            output_data.to_csv(output, index=False)
 
     # Add visualization if requested
     if config.visualize:
