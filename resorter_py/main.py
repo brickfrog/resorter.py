@@ -172,25 +172,55 @@ class BradleyTerryModel:
             self.alpha_beta[item] = self.bayesian_update(alpha, beta, win, lose)
 
     def print_estimates(self) -> None:
-        for item, (alpha, beta) in self.alpha_beta.items():
+        mean_uncertainty = self.get_mean_uncertainty()
+        print(f"\nMean uncertainty: {mean_uncertainty:.4f}")
+        print("\nItem rankings:")
+        sorted_items = sorted(
+            self.alpha_beta.items(),
+            key=lambda x: x[1][0] / (x[1][0] + x[1][1]),
+            reverse=True
+        )
+        for item, (alpha, beta) in sorted_items:
             rank = alpha / (alpha + beta)
             se = self.standard_error(alpha, beta)
             print(f"{item}: rank = {rank:.2f}, σ = {se:.4f}")
+
+    def get_most_uncertain_pair(self) -> Tuple[Union[int, str], Union[int, str]]:
+        """Get the pair of items with highest combined uncertainty."""
+        uncertainties = {
+            item: self.standard_error(alpha, beta)
+            for item, (alpha, beta) in self.alpha_beta.items()
+        }
+        # Sort items by uncertainty
+        sorted_items = sorted(uncertainties.items(), key=lambda x: x[1], reverse=True)
+        # Return the two most uncertain items
+        return sorted_items[0][0], sorted_items[1][0]
 
     def generate_comparison_data(
         self, queries: int
     ) -> List[Tuple[Union[int, str], Union[int, str], float, float]]:
         comparison_data = []
         print(
-            "Comparison commands: 1=yes, 2=tied, 3=second is better, p=print estimates, s=skip question, q=quit"  # noqa: E501
+            "Comparison commands: 1=yes, 2=tied, 3=second is better, p=print estimates, s=skip question, q=quit"
         )
-        for _ in range(queries):
-            item_a, item_b = random.sample(self.items, 2)
-            while item_a == item_b:
+        
+        for i in range(queries):
+            # Alternate between uncertainty-based and random selection
+            if i % 2 == 0:
+                item_a, item_b = self.get_most_uncertain_pair()
+            else:
                 item_a, item_b = random.sample(self.items, 2)
+                while item_a == item_b:
+                    item_a, item_b = random.sample(self.items, 2)
+            
             response = self.ask_question(item_a, item_b)
+            if response == "skip":
+                continue
+            
             win_a, win_b = (
-                (1, 0) if response == 1 else (0, 1) if response == 3 else (0.5, 0.5)
+                (1, 0) if response == 1 
+                else (0, 1) if response == 3 
+                else (0.5, 0.5)
             )
             comparison_data.append((item_a, item_b, win_a, win_b))
         return comparison_data
@@ -214,6 +244,14 @@ class BradleyTerryModel:
             player: alpha / (alpha + beta)
             for player, (alpha, beta) in self.alpha_beta.items()
         }
+
+    def get_mean_uncertainty(self) -> float:
+        """Calculate mean uncertainty across all items."""
+        uncertainties = [
+            self.standard_error(alpha, beta)
+            for alpha, beta in self.alpha_beta.values()
+        ]
+        return sum(uncertainties) / len(uncertainties)
 
 
 @click.command()
@@ -259,7 +297,7 @@ def main(
     progress: bool,
 ) -> None:
     config: Config = Config(input, output, queries, levels, quantiles, progress)
-
+    
     try:
         df: pd.DataFrame = read_input(input)
     except FileNotFoundError:
@@ -271,13 +309,26 @@ def main(
     print(f"Number of queries: {queries}")
 
     model: BradleyTerryModel = BradleyTerryModel(items, scores)
+    
+    # Print initial state if progress tracking is enabled
     if config.progress:
+        print("\nInitial state:")
         model.print_estimates()
-
-    comparison_data = model.generate_comparison_data(queries)
-    model.update_ranks(comparison_data)
+    
+    comparison_data = []
+    for i in range(queries):
+        if config.progress:
+            print(f"\nQuery {i+1}/{queries}")
+            if i > 0 and i % 5 == 0:  # Show progress every 5 comparisons
+                model.print_estimates()
+        
+        new_comparison = model.generate_comparison_data(1)
+        if new_comparison:  # Only update if we got a valid comparison
+            comparison_data.extend(new_comparison)
+            model.update_ranks(new_comparison)
 
     if config.progress:
+        print("\nFinal rankings:")
         model.print_estimates()
 
     ranks: Dict[Any, float] = model.compute_ranks()
