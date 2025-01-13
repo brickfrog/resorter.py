@@ -1,7 +1,7 @@
 import subprocess
 import csv
 import pandas as pd
-from resorter import (
+from resorter_py.main import (
     parse_input,
     determine_queries,
     generate_bin_edges,
