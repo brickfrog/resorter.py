@@ -4,9 +4,28 @@ import sys
 from math import ceil, sqrt
 from typing import Any, Dict, List, Optional, Tuple, Union
 import os
+from difflib import SequenceMatcher
+import json
 
 import numpy as np
 import pandas as pd
+
+
+class Config:
+    def __init__(
+        self, input, output, queries, levels, quantiles, progress,
+        save_state, load_state, min_confidence, visualize
+    ):
+        self.input = input
+        self.output = output
+        self.queries = queries
+        self.levels = levels
+        self.quantiles = quantiles
+        self.progress = progress
+        self.save_state = save_state
+        self.load_state = load_state
+        self.min_confidence = min_confidence
+        self.visualize = visualize
 
 
 def read_input(data_input: str) -> pd.DataFrame:
@@ -103,16 +122,6 @@ def assign_levels(
     return levels
 
 
-class Config:
-    def __init__(self, input, output, queries, levels, quantiles, progress):
-        self.input = input
-        self.output = output
-        self.queries = queries
-        self.levels = levels
-        self.quantiles = quantiles
-        self.progress = progress
-
-
 class BayesianPairwiseRanker:
     def __init__(
         self,
@@ -121,21 +130,26 @@ class BayesianPairwiseRanker:
     ) -> None:
         self.items: List[Union[int, str]] = items
         self.alpha_beta: Dict[Union[int, str], Tuple[float, float]]
+        self.iteration_count: int = 0
+        self.completed_comparisons: set = set()
         if scores:
             self.alpha_beta = {
                 item: (float(score), 1) for item, score in scores.items()
             }
         else:
             self.alpha_beta = {item: (1, 1) for item in items}
+        self.history: List[Tuple[str, str, Dict[Union[int, str], Tuple[float, float]]]] = []
 
     @staticmethod
     def standard_error(alpha: float, beta: float) -> float:
         return sqrt((alpha * beta) / ((alpha + beta) ** 2 * (alpha + beta + 1)))
 
     def bayesian_update(
-        self, alpha: float, beta: float, win: float, lose: float
+        self, alpha: float, beta: float, win: float, lose: float, iteration: int
     ) -> Tuple[float, float]:
-        return alpha + win, beta + lose
+        """Adaptive learning rate that decreases as we get more confident"""
+        learning_rate = 1.0 / (1.0 + iteration * 0.1)  # Decreases over time
+        return alpha + win * learning_rate, beta + lose * learning_rate
 
     def ask_question(
         self, item_a: Union[int, str], item_b: Union[int, str]
@@ -143,7 +157,7 @@ class BayesianPairwiseRanker:
         while True:
             try:
                 response = input(
-                    f"Is '{click.style(item_a, fg='green')}' better than '{click.style(item_b, fg='green')}'? "  # noqa: E501
+                    f"Is '{click.style(item_a, fg='green')}' better than '{click.style(item_b, fg='green')}'? "
                 )
                 if response in ["1", "2", "3"]:
                     self.update_single_query(item_a, item_b, int(response))
@@ -153,23 +167,39 @@ class BayesianPairwiseRanker:
                     return "skip"
                 elif response == "p":
                     self.print_estimates()
+                elif response == "u":
+                    self.undo_last_comparison()
                 elif response == "q":
                     print("Quitting...")
                     exit(0)
                 else:
-                    print("Invalid input. Please enter 1, 2, 3, s, p, or q.")
+                    print("Invalid input. Please enter 1, 2, 3, s, p, u, or q.")
             except ValueError:
-                print("Invalid input. Please enter 1, 2, 3, s, p, or q.")
+                print("Invalid input. Please enter 1, 2, 3, s, p, u, or q.")
 
     def update_single_query(
         self, item_a: Union[int, str], item_b: Union[int, str], response: int
     ) -> None:
+        # Save state before update
+        self.history.append((item_a, item_b, self.alpha_beta.copy()))
+        
         winners = [(1, 0), (0.5, 0.5), (0, 1)]
         win_a, win_b = winners[response - 1]
 
+        self.iteration_count += 1  # Increment iteration counter
         for item, win, lose in [(item_a, win_a, win_b), (item_b, win_b, win_a)]:
             alpha, beta = self.alpha_beta[item]
-            self.alpha_beta[item] = self.bayesian_update(alpha, beta, win, lose)
+            self.alpha_beta[item] = self.bayesian_update(alpha, beta, win, lose, self.iteration_count)
+
+    def undo_last_comparison(self) -> None:
+        """Undo the last comparison by restoring the previous state"""
+        if not self.history:
+            print("Nothing to undo!")
+            return
+        
+        item_a, item_b, previous_state = self.history.pop()
+        self.alpha_beta = previous_state
+        print(f"Undid comparison between '{item_a}' and '{item_b}'")
 
     def print_estimates(self) -> None:
         mean_uncertainty = self.get_mean_uncertainty()
@@ -201,6 +231,10 @@ class BayesianPairwiseRanker:
             for item_b in self.items:
                 if item_a >= item_b:  # Skip self-comparisons and duplicates
                     continue
+                
+                # Skip if we've already compared this pair
+                if self.get_comparison_key(item_a, item_b) in self.completed_comparisons:
+                    continue
                     
                 # Consider both uncertainty and how close the items are in ranking
                 rank_a = self.alpha_beta[item_a][0] / sum(self.alpha_beta[item_a])
@@ -211,29 +245,54 @@ class BayesianPairwiseRanker:
                 information_value = (uncertainties[item_a] + uncertainties[item_b]) * (1 - rank_diff)
                 pairs.append((item_a, item_b, information_value))
         
+        if not pairs:  # If all pairs have been compared
+            self.completed_comparisons.clear()  # Reset completed comparisons
+            return random.sample(self.items, 2)  # Return a random pair
+        
         # Return the most informative pair
         pairs.sort(key=lambda x: x[2], reverse=True)
         return pairs[0][0], pairs[0][1]
+
+    def get_comparison_key(self, item_a: Union[int, str], item_b: Union[int, str]) -> tuple:
+        """Create a consistent key for a comparison regardless of order"""
+        return tuple(sorted([str(item_a), str(item_b)]))
 
     def generate_comparison_data(
         self, queries: int
     ) -> List[Tuple[Union[int, str], Union[int, str], float, float]]:
         comparison_data = []
         print(
-            "Comparison commands: 1=yes, 2=tied, 3=second is better, p=print estimates, s=skip question, q=quit"
+            "Comparison commands: 1=yes, 2=tied, 3=second is better, p=print estimates, "
+            "s=skip question, u=undo last comparison, q=quit"
         )
         
-        for i in range(queries):
-            # Use different selection strategies based on progress
-            if i < queries * 0.3:  # First 30%: focus on high uncertainty
-                item_a, item_b = self.get_most_uncertain_pair()
-            elif i < queries * 0.7:  # Middle 40%: use information gain
-                item_a, item_b = self.get_most_informative_pair()
-            else:  # Last 30%: random selection to avoid local optima
-                item_a, item_b = random.sample(self.items, 2)
-                while item_a == item_b:
-                    item_a, item_b = random.sample(self.items, 2)
+        i = 0
+        while i < queries:
+            if self.history:
+                last_comparison = self.history[-1]
+                item_a, item_b = last_comparison[0], last_comparison[1]
+            else:
+                attempts = 0
+                max_attempts = 10
+                while attempts < max_attempts:
+                    if i < queries * 0.3:
+                        item_a, item_b = self.get_most_uncertain_pair()
+                    elif i < queries * 0.7:
+                        item_a, item_b = self.get_most_informative_pair()
+                    else:
+                        item_a, item_b = random.sample(self.items, 2)
+                        while item_a == item_b:
+                            item_a, item_b = random.sample(self.items, 2)
+                    
+                    comparison_key = self.get_comparison_key(item_a, item_b)
+                    if comparison_key not in self.completed_comparisons:
+                        break
+                    attempts += 1
+                
+                if attempts == max_attempts:
+                    self.completed_comparisons.clear()
             
+            print(f"\nComparison {i+1}/{queries}")  # Show progress
             response = self.ask_question(item_a, item_b)
             if response == "skip":
                 continue
@@ -244,21 +303,21 @@ class BayesianPairwiseRanker:
                 else (0.5, 0.5)
             )
             comparison_data.append((item_a, item_b, win_a, win_b))
+            self.completed_comparisons.add(self.get_comparison_key(item_a, item_b))
+            self.history.clear()
+            i += 1
+            
+            # Show current rankings after each comparison if progress is enabled
+            if hasattr(self, 'show_progress') and self.show_progress:
+                self.print_estimates()
         return comparison_data
 
     def update_ranks(
         self,
         comparison_data: List[Tuple[Union[int, str], Union[int, str], float, float]],
     ) -> None:
-        for item_a, item_b, win_a, win_b in comparison_data:
-            alpha_a, beta_a = self.alpha_beta[item_a]
-            alpha_b, beta_b = self.alpha_beta[item_b]
-            self.alpha_beta[item_a] = self.bayesian_update(
-                alpha_a, beta_a, win_a, win_b
-            )
-            self.alpha_beta[item_b] = self.bayesian_update(
-                alpha_b, beta_b, win_b, win_a
-            )
+        """This method is now deprecated as updates happen in real-time"""
+        pass
 
     def compute_ranks(self) -> Dict[Union[int, str], float]:
         return {
@@ -294,50 +353,136 @@ class BayesianPairwiseRanker:
         return confidences
 
     def get_most_uncertain_pair(self) -> Tuple[Union[int, str], Union[int, str]]:
-        """Get the pair of items with highest combined uncertainty."""
+        """Get the pair of items with highest combined uncertainty that hasn't been compared."""
         uncertainties = {
             item: self.standard_error(alpha, beta)
             for item, (alpha, beta) in self.alpha_beta.items()
         }
         # Sort items by uncertainty
         sorted_items = sorted(uncertainties.items(), key=lambda x: x[1], reverse=True)
-        # Return the two most uncertain items
+        
+        # Find the first valid pair that hasn't been compared
+        for i, (item_a, _) in enumerate(sorted_items):
+            for item_b, _ in sorted_items[i+1:]:
+                if self.get_comparison_key(item_a, item_b) not in self.completed_comparisons:
+                    return item_a, item_b
+        
+        # If all pairs have been compared, return the first two items
         return sorted_items[0][0], sorted_items[1][0]
+
+    def initialize_with_similarity(self, items: List[str], scores: Optional[Dict[str, float]] = None) -> None:
+        """Initialize rankings using text similarity when scores are available for some items"""
+        if not scores:
+            return
+        
+        # For items without scores, estimate based on similar items that have scores
+        for item in items:
+            if item not in scores:
+                similar_items = [
+                    (other_item, SequenceMatcher(None, item, other_item).ratio())
+                    for other_item, score in scores.items()
+                ]
+                if similar_items:
+                    most_similar = max(similar_items, key=lambda x: x[1])
+                    if most_similar[1] > 0.8:  # Only use if similarity is high
+                        scores[item] = scores[most_similar[0]]
+
+    def should_continue(self, min_confidence: float = 0.9) -> bool:
+        """Check if we should continue comparing based on confidence levels"""
+        confidences = self.get_ranking_confidence()
+        mean_confidence = sum(confidences.values()) / len(confidences)
+        return mean_confidence < min_confidence
+
+    def save_state(self, filename: str) -> None:
+        """Save current state to file"""
+        state = {
+            'items': self.items,
+            'alpha_beta': {str(k): v for k, v in self.alpha_beta.items()},
+            'history': [(str(a), str(b), {str(k): v for k, v in s.items()}) 
+                       for a, b, s in self.history]
+        }
+        with open(filename, 'w') as f:
+            json.dump(state, f)
+
+    def load_state(self, filename: str) -> None:
+        """Load state from file"""
+        with open(filename, 'r') as f:
+            state = json.load(f)
+        self.items = state['items']
+        self.alpha_beta = {eval(k) if k.isdigit() else k: tuple(v) 
+                          for k, v in state['alpha_beta'].items()}
+        self.history = [(eval(a) if a.isdigit() else a,
+                        eval(b) if b.isdigit() else b,
+                        {eval(k) if k.isdigit() else k: tuple(v) 
+                         for k, v in s.items()})
+                        for a, b, s in state['history']]
+
+    def visualize_rankings(self) -> None:
+        """Display a simple ASCII visualization of rankings"""
+        ranks = self.compute_ranks()
+        sorted_items = sorted(ranks.items(), key=lambda x: x[1], reverse=True)
+        max_name_len = max(len(str(item)) for item in self.items)
+        
+        print("\nRanking visualization:")
+        for item, rank in sorted_items:
+            bar_length = int(rank * 40)
+            print(f"{str(item):<{max_name_len}} | {'#' * bar_length}{' ' * (40-bar_length)} | {rank:.2f}")
 
 
 @click.command()
 @click.option(
     "--input",
     required=True,
-    help="input file: a CSV file of items to sort: one per line, with up to two columns. (eg. both 'Akira' and 'Akira, 10' are valid)",  # noqa: E501
+    help="input file: a CSV file of items to sort: one per line, with up to two columns. (eg. both 'Akira' and 'Akira, 10' are valid)",
 )
 @click.option(
     "--output",
     required=False,
-    help="output file: a file to write the final results to. Default: printing to stdout.",  # noqa: E501
+    help="output file: a file to write the final results to. Default: printing to stdout.",
 )
 @click.option(
     "--queries",
     default=None,
     type=int,
-    help="Maximum number of questions to ask the user; defaults to N*log(N) comparisons. If already rated, 𝒪 (n) is a good max, but the more items and more levels in the scale and more accuracy desired, the more comparisons are needed.",  # noqa: E501
+    help="Maximum number of questions to ask the user; defaults to N*log(N) comparisons.",
 )
 @click.option(
     "--levels",
     default=None,
     type=int,
-    help="The highest level; rated items will be discretized into 1–l levels, so l=5 means items are bucketed into 5 levels: [1,2,3,4,5], etc. Maps onto quantiles; valid values: 2–100.",  # noqa: E501
+    help="The highest level; rated items will be discretized into 1–l levels.",
 )
 @click.option(
     "--quantiles",
     default=None,
     type=str,
-    help="What fraction to allocate to each level; space-separated; overrides `--levels`. This allows making one level of ratings narrower (and more precise) than the others, at their expense; for example, one could make 3-star ratings rarer with quantiles like `--quantiles '0 0.25 0.8 1'`. Default: uniform distribution (1--5 → '0.0 0.2 0.4 0.6 0.8 1.0').",  # noqa: E501
+    help="What fraction to allocate to each level; space-separated; overrides `--levels`.",
 )
 @click.option(
     "--progress",
     is_flag=True,
-    help="Print the mean standard error to stdout",  # noqa: E501
+    help="Print the mean standard error to stdout",
+)
+@click.option(
+    "--save-state",
+    type=str,
+    help="Save the current state to this file",
+)
+@click.option(
+    "--load-state",
+    type=str,
+    help="Load the previous state from this file",
+)
+@click.option(
+    "--min-confidence",
+    type=float,
+    default=0.9,
+    help="Minimum confidence level before stopping (0-1)",
+)
+@click.option(
+    "--visualize",
+    is_flag=True,
+    help="Show ASCII visualization of rankings",
 )
 def main(
     input: str,
@@ -346,8 +491,15 @@ def main(
     levels: Optional[int],
     quantiles: Optional[str],
     progress: bool,
+    save_state: Optional[str],
+    load_state: Optional[str],
+    min_confidence: float,
+    visualize: bool,
 ) -> None:
-    config: Config = Config(input, output, queries, levels, quantiles, progress)
+    config: Config = Config(
+        input, output, queries, levels, quantiles, progress,
+        save_state, load_state, min_confidence, visualize
+    )
     
     try:
         df: pd.DataFrame = read_input(input)
@@ -360,24 +512,14 @@ def main(
     print(f"Number of queries: {queries}")
 
     model: BayesianPairwiseRanker = BayesianPairwiseRanker(items, scores)
+    model.show_progress = config.progress
     
-    # Print initial state if progress tracking is enabled
     if config.progress:
         print("\nInitial state:")
         model.print_estimates()
     
-    comparison_data = []
-    for i in range(queries):
-        if config.progress:
-            print(f"\nQuery {i+1}/{queries}")
-            if i > 0 and i % 5 == 0:  # Show progress every 5 comparisons
-                model.print_estimates()
-        
-        new_comparison = model.generate_comparison_data(1)
-        if new_comparison:  # Only update if we got a valid comparison
-            comparison_data.extend(new_comparison)
-            model.update_ranks(new_comparison)
-
+    comparison_data = model.generate_comparison_data(queries)
+    
     if config.progress:
         print("\nFinal rankings:")
         model.print_estimates()
@@ -413,6 +555,14 @@ def main(
         output_data.to_csv(sys.stdout, index=False)
     else:
         output_data.to_csv(output, index=False)
+
+    # Add visualization if requested
+    if config.visualize:
+        model.visualize_rankings()
+    
+    # Save state if requested
+    if config.save_state:
+        model.save_state(config.save_state)
 
 
 if __name__ == "__main__":
