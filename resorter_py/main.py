@@ -173,6 +173,8 @@ class BradleyTerryModel:
 
     def print_estimates(self) -> None:
         mean_uncertainty = self.get_mean_uncertainty()
+        confidences = self.get_ranking_confidence()
+        
         print(f"\nMean uncertainty: {mean_uncertainty:.4f}")
         print("\nItem rankings:")
         sorted_items = sorted(
@@ -183,18 +185,35 @@ class BradleyTerryModel:
         for item, (alpha, beta) in sorted_items:
             rank = alpha / (alpha + beta)
             se = self.standard_error(alpha, beta)
-            print(f"{item}: rank = {rank:.2f}, σ = {se:.4f}")
+            confidence = confidences[item]
+            print(f"{item}: rank = {rank:.2f}, σ = {se:.4f}, confidence = {confidence:.2%}")
 
-    def get_most_uncertain_pair(self) -> Tuple[Union[int, str], Union[int, str]]:
-        """Get the pair of items with highest combined uncertainty."""
+    def get_most_informative_pair(self) -> Tuple[Union[int, str], Union[int, str]]:
+        """Get the pair of items that would provide the most information."""
         uncertainties = {
             item: self.standard_error(alpha, beta)
             for item, (alpha, beta) in self.alpha_beta.items()
         }
-        # Sort items by uncertainty
-        sorted_items = sorted(uncertainties.items(), key=lambda x: x[1], reverse=True)
-        # Return the two most uncertain items
-        return sorted_items[0][0], sorted_items[1][0]
+        
+        # Calculate expected information gain for each possible pair
+        pairs = []
+        for item_a in self.items:
+            for item_b in self.items:
+                if item_a >= item_b:  # Skip self-comparisons and duplicates
+                    continue
+                    
+                # Consider both uncertainty and how close the items are in ranking
+                rank_a = self.alpha_beta[item_a][0] / sum(self.alpha_beta[item_a])
+                rank_b = self.alpha_beta[item_b][0] / sum(self.alpha_beta[item_b])
+                rank_diff = abs(rank_a - rank_b)
+                
+                # Items with similar ranks but high uncertainty are most informative
+                information_value = (uncertainties[item_a] + uncertainties[item_b]) * (1 - rank_diff)
+                pairs.append((item_a, item_b, information_value))
+        
+        # Return the most informative pair
+        pairs.sort(key=lambda x: x[2], reverse=True)
+        return pairs[0][0], pairs[0][1]
 
     def generate_comparison_data(
         self, queries: int
@@ -205,10 +224,12 @@ class BradleyTerryModel:
         )
         
         for i in range(queries):
-            # Alternate between uncertainty-based and random selection
-            if i % 2 == 0:
+            # Use different selection strategies based on progress
+            if i < queries * 0.3:  # First 30%: focus on high uncertainty
                 item_a, item_b = self.get_most_uncertain_pair()
-            else:
+            elif i < queries * 0.7:  # Middle 40%: use information gain
+                item_a, item_b = self.get_most_informative_pair()
+            else:  # Last 30%: random selection to avoid local optima
                 item_a, item_b = random.sample(self.items, 2)
                 while item_a == item_b:
                     item_a, item_b = random.sample(self.items, 2)
@@ -252,6 +273,36 @@ class BradleyTerryModel:
             for alpha, beta in self.alpha_beta.values()
         ]
         return sum(uncertainties) / len(uncertainties)
+
+    def get_ranking_confidence(self) -> Dict[Union[int, str], float]:
+        """Calculate confidence in ranking for each item (0-1 scale)."""
+        total_comparisons = {item: 0.0 for item in self.items}
+        for item, (alpha, beta) in self.alpha_beta.items():
+            total_comparisons[item] = alpha + beta - 2  # Subtract initial values
+        
+        max_comparisons = max(total_comparisons.values())
+        if max_comparisons == 0:
+            return {item: 0.0 for item in self.items}
+        
+        # Combine number of comparisons and uncertainty into confidence score
+        confidences = {}
+        for item in self.items:
+            uncertainty = self.standard_error(*self.alpha_beta[item])
+            comparison_ratio = total_comparisons[item] / max_comparisons
+            confidences[item] = (1 - uncertainty) * comparison_ratio
+        
+        return confidences
+
+    def get_most_uncertain_pair(self) -> Tuple[Union[int, str], Union[int, str]]:
+        """Get the pair of items with highest combined uncertainty."""
+        uncertainties = {
+            item: self.standard_error(alpha, beta)
+            for item, (alpha, beta) in self.alpha_beta.items()
+        }
+        # Sort items by uncertainty
+        sorted_items = sorted(uncertainties.items(), key=lambda x: x[1], reverse=True)
+        # Return the two most uncertain items
+        return sorted_items[0][0], sorted_items[1][0]
 
 
 @click.command()
