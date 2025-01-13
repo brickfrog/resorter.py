@@ -113,7 +113,7 @@ class Config:
         self.progress = progress
 
 
-class BradleyTerryModel:
+class BayesianPairwiseRanker:
     def __init__(
         self,
         items: List[Union[int, str]],
@@ -359,7 +359,7 @@ def main(
     queries: int = determine_queries(items, config.queries)
     print(f"Number of queries: {queries}")
 
-    model: BradleyTerryModel = BradleyTerryModel(items, scores)
+    model: BayesianPairwiseRanker = BayesianPairwiseRanker(items, scores)
     
     # Print initial state if progress tracking is enabled
     if config.progress:
