@@ -32,12 +32,26 @@ class Config:
 def read_input(data_input: str) -> pd.DataFrame:
     """
     Reads .csv into a dataframe, or splits a comma-separated string into a dataframe.
+    Returns DataFrame with 'Item' and optionally 'Score' columns.
     """
     if os.path.exists(data_input) and data_input.endswith(".csv"):
-        return pd.read_csv(data_input, header=None, dtype=str, na_filter=False)
+        try:
+            # First try reading with headers
+            df = pd.read_csv(data_input, dtype=str, na_filter=False)
+            if 'Item' not in df.columns:
+                # If headers don't match, read without headers and set them
+                df = pd.read_csv(data_input, header=None, dtype=str, na_filter=False)
+                if df.shape[1] == 2:
+                    df.columns = ['Item', 'Score']
+                else:
+                    df.columns = ['Item']
+        except pd.errors.EmptyDataError:
+            return pd.DataFrame(columns=['Item'])
+        return df
 
-    items = data_input.split(",")
-    return pd.DataFrame(items, columns=["Items"])
+    # Handle comma-separated string input
+    items = [item.strip() for item in data_input.split(",")]
+    return pd.DataFrame({"Item": items})
 
 
 def parse_input(
@@ -45,13 +59,13 @@ def parse_input(
 ) -> Tuple[List[Union[int, str]], Optional[Dict[Union[int, str], float]]]:
     """
     Parse the input dataframe to separate items and scores.
+    Expects DataFrame with 'Item' and optionally 'Score' columns.
     """
-    if df.shape[1] == 2:
-        items = df.iloc[:, 0].tolist()
-        scores = df.set_index(0).iloc[:, 0].to_dict()
+    items = df['Item'].tolist()
+    if 'Score' in df.columns:
+        scores = df.set_index('Item')['Score'].astype(str).to_dict()
     else:
-        items = df.iloc[:, 0].tolist()
-        scores = None  # No scores provided
+        scores = None
     return items, scores
 
 
@@ -408,7 +422,7 @@ class BayesianPairwiseRanker:
         """Check if we should continue comparing based on confidence levels"""
         confidences = self.get_ranking_confidence()
         mean_confidence = sum(confidences.values()) / len(confidences)
-        return mean_confidence < min_confidence
+        return mean_confidence < min_confidence  # Continue if confidence is too low
 
     def save_state(self, filename: str) -> None:
         """Save current state to file"""
@@ -585,23 +599,26 @@ def main(
 
     if config.levels:
         levels = assign_levels(sorted_ranks, config.levels)
-        output_data = pd.DataFrame(
-            {"Item": list(levels.keys()), "Quantiles": list(levels.values())}
-        )
+        output_data = pd.DataFrame({
+            'Item': list(levels.keys()),
+            'Quantiles': list(levels.values())
+        })
     elif config.quantiles:
         quantile_cutoffs = [float(x) for x in config.quantiles.split(" ")]
         quantiles = assign_custom_quantiles(sorted_ranks, quantile_cutoffs)
-        output_data = pd.DataFrame(
-            {"Item": list(quantiles.keys()), "Quantiles": list(quantiles.values())}
-        )
+        output_data = pd.DataFrame({
+            'Item': list(quantiles.keys()),
+            'Quantiles': list(quantiles.values())
+        })
     else:
         sorted_ranks = {k: v for k, v in reversed(list(sorted_ranks.items()))}
         level_assignments = {
             item: rank + 1 for rank, (item, _) in enumerate(sorted_ranks.items())
         }
-        output_data = pd.DataFrame(
-            list(level_assignments.items()), columns=["Item", "Quantiles"]
-        )
+        output_data = pd.DataFrame({
+            'Item': list(level_assignments.keys()),
+            'Quantiles': list(level_assignments.values())
+        })
 
     output_data = output_data.sort_values(by=["Quantiles"], ascending=False)
 
