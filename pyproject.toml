@@ -5,7 +5,7 @@ description = "A Python implementation of Gwern's resorter for ranking items thr
 readme = "README.md"
 requires-python = ">=3.12"
 authors = [
-    {name = "Justin Malloy", email = ""}
+    {name = "Justin Malloy"}
 ]
 urls = {Homepage = "https://github.com/brickfrog"}
 dependencies = [

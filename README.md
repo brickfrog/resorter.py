@@ -1,18 +1,16 @@
 # resorter.py
 
-Python implementation(-ish) of gwern's [resorter](https://www.gwern.net/Resorter) for ranking items based on user input through enhanced comparison functionality.
-
-## Features
-
-This implementation includes enhanced comparison functionality and integrates seamlessly with the Python ecosystem, including frameworks like [streamlit](https://streamlit.io/). 
+Python implementation(-ish) of gwern's [resorter](https://www.gwern.net/Resorter) for ranking items based on user input.
 
 # Installation
+
+The simplest option is to use the `uv` to install the package as CLI tool, granting you the `resorter` command.
 
 ```bash
 uv tool install .
 ```
 
-See the documentation for more (up-to-date) information about usage.
+See the help for more (up-to-date) information about usage.
 
 ```bash
 Usage: main.py [OPTIONS]
@@ -50,6 +48,4 @@ Options:
 
 Thanks to Gwern for the [original concept](https://gwern.net/resorter) and inspiration.
 
-I'm recommending looking at hiAndrewQuinn's [repackaging](https://github.com/hiAndrewQuinn/resorter) if you're looking for the original resorter in an easier-to-install package. Python doesn't have the same kind of statistics packages available, so I had to handroll the comparison functionality. I'm not 100% sure I have it correct, but it passes the smell test insofar as rankings.
-
-This project is primarily for integrating with the rest of the Python ecosystem, where I plan to pipe my own media rankings and so on and so forth.
+I primarily wrote it to integrate with other python code, I'd recommending looking at hiAndrewQuinn's [repackaging](https://github.com/hiAndrewQuinn/resorter) if you're looking for the original resorter in an easier-to-install package. Python doesn't have the same kind of statistics packages available, so I had to handroll the comparison functionality. I'm not 100% sure I have it correct, but it passes the smell test insofar as rankings.

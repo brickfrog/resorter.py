@@ -282,6 +282,64 @@ class BayesianPairwiseRanker:
         """Create a consistent key for a comparison regardless of order"""
         return tuple(sorted([str(item_a), str(item_b)]))
 
+    def get_next_comparison(self) -> Optional[Tuple[Union[int, str], Union[int, str]]]:
+        """Get the next pair of items to compare without requiring immediate input.
+        Returns None if no more comparisons are needed based on confidence threshold."""
+        
+        if hasattr(self, 'min_confidence'):
+            if not self.should_continue(self.min_confidence):
+                return None
+
+        # Calculate total possible unique comparisons
+        total_possible = (len(self.items) * (len(self.items) - 1)) // 2
+        
+        # If we've compared all possible pairs, we're done
+        if len(self.completed_comparisons) >= total_possible:
+            return None
+        
+        attempts = 0
+        max_attempts = 10
+        while attempts < max_attempts:
+            # Use the same smart selection logic as generate_comparison_data
+            progress = self.iteration_count / (len(self.items) * np.log(len(self.items)))
+            if progress < 0.3:
+                item_a, item_b = self.get_most_uncertain_pair()
+            elif progress < 0.7:
+                item_a, item_b = self.get_most_informative_pair()
+            else:
+                item_a, item_b = random.sample(self.items, 2)
+                while item_a == item_b:
+                    item_a, item_b = random.sample(self.items, 2)
+            
+            comparison_key = self.get_comparison_key(item_a, item_b)
+            if comparison_key not in self.completed_comparisons:
+                return item_a, item_b
+            attempts += 1
+        
+        # If we're having trouble finding a new pair, try systematically
+        for i, item_a in enumerate(self.items):
+            for item_b in self.items[i+1:]:
+                comparison_key = self.get_comparison_key(item_a, item_b)
+                if comparison_key not in self.completed_comparisons:
+                    return item_a, item_b
+        
+        # If we get here, something is wrong - we should have found an unused pair
+        # or returned None earlier if all pairs were used
+        return None
+
+    def submit_comparison(self, item_a: Union[int, str], item_b: Union[int, str], response: int) -> None:
+        """Submit a comparison result for a pair of items.
+        response should be:
+        1 - if item_a is better than item_b
+        2 - if they are equal
+        3 - if item_b is better than item_a"""
+        if response not in [1, 2, 3]:
+            raise ValueError("Response must be 1, 2, or 3")
+        
+        self.update_single_query(item_a, item_b, response)
+        self.completed_comparisons.add(self.get_comparison_key(item_a, item_b))
+        self.history.clear()
+
     def generate_comparison_data(
         self, queries: int
     ) -> List[Tuple[Union[int, str], Union[int, str], float, float]]:

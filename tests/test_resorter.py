@@ -9,6 +9,7 @@ from resorter_py.main import (
     assign_custom_quantiles,
     Config,
 )
+import random
 
 
 @pytest.fixture
@@ -272,3 +273,86 @@ def test_early_stopping(sample_model):
     
     # With high confidence threshold, should continue (return True)
     assert sample_model.should_continue(0.99)
+
+
+def test_get_next_comparison(sample_model):
+    # First comparison should be from most uncertain pairs (early phase)
+    comparison = sample_model.get_next_comparison()
+    assert comparison is not None
+    assert len(comparison) == 2
+    assert all(item in sample_model.items for item in comparison)
+    assert comparison[0] != comparison[1]
+
+    # Test that same comparison isn't returned twice
+    first_comparison = comparison
+    sample_model.submit_comparison(*first_comparison, 1)
+    second_comparison = sample_model.get_next_comparison()
+    assert second_comparison != first_comparison
+
+    # Test early stopping with confidence threshold
+    sample_model.min_confidence = 0.1  # Set very low confidence threshold
+    # Make several comparisons to build up confidence
+    for _ in range(10):
+        comparison = sample_model.get_next_comparison()
+        if comparison is None:
+            break
+        sample_model.submit_comparison(*comparison, 1)
+
+
+def test_submit_comparison(sample_model):
+    # Get initial state
+    initial_alpha_beta = sample_model.alpha_beta.copy()
+    initial_completed = sample_model.completed_comparisons.copy()
+    initial_count = sample_model.iteration_count
+
+    # Submit a valid comparison
+    item_a, item_b = "A", "B"
+    sample_model.submit_comparison(item_a, item_b, 1)
+
+    # Check state was updated
+    assert sample_model.alpha_beta != initial_alpha_beta
+    assert len(sample_model.completed_comparisons) > len(initial_completed)
+    assert sample_model.iteration_count == initial_count + 1
+    assert sample_model.get_comparison_key(item_a, item_b) in sample_model.completed_comparisons
+
+    # Test invalid response
+    with pytest.raises(ValueError):
+        sample_model.submit_comparison(item_a, item_b, 4)
+    with pytest.raises(ValueError):
+        sample_model.submit_comparison(item_a, item_b, 0)
+
+    # Test comparison tracking
+    key = sample_model.get_comparison_key(item_a, item_b)
+    assert key in sample_model.completed_comparisons
+    # Same comparison with items swapped should be tracked
+    key_swapped = sample_model.get_comparison_key(item_b, item_a)
+    assert key_swapped in sample_model.completed_comparisons
+
+
+def test_comparison_sequence(sample_model):
+    """Test the full sequence of getting comparisons and submitting results"""
+    seen_comparisons = set()
+    max_comparisons = 10
+    
+    for _ in range(max_comparisons):
+        comparison = sample_model.get_next_comparison()
+        if comparison is None:  # Stop if confidence threshold reached
+            break
+            
+        # Check comparison is valid
+        assert comparison[0] != comparison[1]
+        assert all(item in sample_model.items for item in comparison)
+        
+        # Submit a random response (1, 2, or 3)
+        response = random.choice([1, 2, 3])
+        sample_model.submit_comparison(*comparison, response)
+        
+        # Track comparison
+        comparison_key = sample_model.get_comparison_key(*comparison)
+        assert comparison_key not in seen_comparisons  # Shouldn't see same comparison twice
+        seen_comparisons.add(comparison_key)
+    
+    # Verify we have some rankings
+    rankings = sample_model.compute_ranks()
+    assert len(rankings) == len(sample_model.items)
+    assert all(0 <= rank <= 1 for rank in rankings.values())
