@@ -1,14 +1,14 @@
 import pytest
 import pandas as pd
-from resorter_py.main import (
+from resorter_py.ranker import (
     BayesianPairwiseRanker,
     read_input,
     parse_input,
     determine_queries,
     assign_levels,
     assign_custom_quantiles,
-    Config,
 )
+from resorter_py.cli import Config
 import random
 
 
@@ -33,14 +33,14 @@ def test_read_input_csv(tmp_path):
     result = read_input(str(csv_path))
     assert len(result) == 3
     assert result.iloc[0, 0] == "A"
-    assert list(result.columns) == ['Item']
+    assert list(result.columns) == ["Item"]
 
     # Test reading CSV without headers
     df.to_csv(csv_path, index=False, header=False)
     result = read_input(str(csv_path))
     assert len(result) == 3
     assert result.iloc[0, 0] == "A"
-    assert list(result.columns) == ['Item']
+    assert list(result.columns) == ["Item"]
 
 
 def test_read_input_string():
@@ -48,7 +48,7 @@ def test_read_input_string():
     result = read_input("A,B,C")
     assert len(result) == 3
     assert result.iloc[0, 0] == "A"
-    assert list(result.columns) == ['Item']
+    assert list(result.columns) == ["Item"]
 
 
 def test_parse_input():
@@ -65,7 +65,7 @@ def test_parse_input():
     assert scores is None
 
     # Test with empty dataframe
-    df = pd.DataFrame(columns=['Item'])
+    df = pd.DataFrame(columns=["Item"])
     items, scores = parse_input(df)
     assert items == []
     assert scores is None
@@ -122,23 +122,23 @@ def test_should_continue(sample_model):
 
 def test_export_rankings(sample_model):
     # Test CSV export
-    csv_output = sample_model.export_rankings('csv')
+    csv_output = sample_model.export_rankings("csv")
     assert isinstance(csv_output, pd.DataFrame)
-    assert 'Item' in csv_output.columns
-    assert 'Rank' in csv_output.columns
-    assert 'Confidence' in csv_output.columns
+    assert "Item" in csv_output.columns
+    assert "Rank" in csv_output.columns
+    assert "Confidence" in csv_output.columns
 
     # Test JSON export
-    json_output = sample_model.export_rankings('json')
+    json_output = sample_model.export_rankings("json")
     assert isinstance(json_output, dict)
-    assert 'rankings' in json_output
-    assert 'confidences' in json_output
-    assert 'metadata' in json_output
+    assert "rankings" in json_output
+    assert "confidences" in json_output
+    assert "metadata" in json_output
 
     # Test Markdown export
-    md_output = sample_model.export_rankings('markdown')
+    md_output = sample_model.export_rankings("markdown")
     assert isinstance(md_output, str)
-    assert '| Item | Rank | Confidence |' in md_output
+    assert "| Item | Rank | Confidence |" in md_output
 
 
 def test_consistency_check(sample_model):
@@ -155,16 +155,16 @@ def test_consistency_check(sample_model):
 def test_undo_comparison(sample_model):
     # Save initial state
     initial_state = sample_model.alpha_beta.copy()
-    
+
     # Make a comparison
     sample_model.update_single_query("A", "B", 1)
-    
+
     # Verify state changed
     assert sample_model.alpha_beta != initial_state
-    
+
     # Undo the comparison
     sample_model.undo_last_comparison()
-    
+
     # Verify state restored
     assert sample_model.alpha_beta == initial_state
 
@@ -193,24 +193,24 @@ def test_initialize_with_similarity(sample_model):
 
 def test_export_formats(sample_model):
     # Test CSV format
-    csv_output = sample_model.export_rankings('csv')
+    csv_output = sample_model.export_rankings("csv")
     assert isinstance(csv_output, pd.DataFrame)
-    assert list(csv_output.columns) == ['Item', 'Rank', 'Confidence']
-    
+    assert list(csv_output.columns) == ["Item", "Rank", "Confidence"]
+
     # Test JSON format
-    json_output = sample_model.export_rankings('json')
+    json_output = sample_model.export_rankings("json")
     assert isinstance(json_output, dict)
-    assert all(k in json_output for k in ['rankings', 'confidences', 'metadata'])
-    assert 'total_comparisons' in json_output['metadata']
-    
+    assert all(k in json_output for k in ["rankings", "confidences", "metadata"])
+    assert "total_comparisons" in json_output["metadata"]
+
     # Test Markdown format
-    md_output = sample_model.export_rankings('markdown')
+    md_output = sample_model.export_rankings("markdown")
     assert isinstance(md_output, str)
-    assert '| Item | Rank | Confidence |' in md_output
-    
+    assert "| Item | Rank | Confidence |" in md_output
+
     # Test invalid format
     with pytest.raises(ValueError):
-        sample_model.export_rankings('invalid')
+        sample_model.export_rankings("invalid")
 
 
 def test_config():
@@ -225,7 +225,7 @@ def test_config():
         load_state=None,
         min_confidence=0.9,
         visualize=True,
-        format='csv'
+        format="csv",
     )
     assert config.input == "test.csv"
     assert config.output == "out.csv"
@@ -237,22 +237,22 @@ def test_config():
     assert config.load_state is None
     assert config.min_confidence == 0.9
     assert config.visualize is True
-    assert config.format == 'csv'
+    assert config.format == "csv"
 
 
 def test_save_load_state(sample_model, tmp_path):
     # Make some comparisons
     sample_model.update_single_query("A", "B", 1)
     sample_model.update_single_query("C", "D", 2)
-    
+
     # Save state
     state_file = tmp_path / "state.json"
     sample_model.save_state(str(state_file))
-    
+
     # Create new model and load state
     new_model = BayesianPairwiseRanker(["A", "B", "C", "D"])
     new_model.load_state(str(state_file))
-    
+
     # Check if states match
     assert new_model.items == sample_model.items
     assert new_model.alpha_beta == sample_model.alpha_beta
@@ -266,11 +266,11 @@ def test_early_stopping(sample_model):
     sample_model.update_single_query("A", "D", 1)
     sample_model.update_single_query("B", "C", 1)
     sample_model.update_single_query("B", "D", 1)
-    
+
     # Now test stopping conditions
     # With low confidence threshold, should stop (return False)
     assert not sample_model.should_continue(0.1)
-    
+
     # With high confidence threshold, should continue (return True)
     assert sample_model.should_continue(0.99)
 
@@ -313,7 +313,10 @@ def test_submit_comparison(sample_model):
     assert sample_model.alpha_beta != initial_alpha_beta
     assert len(sample_model.completed_comparisons) > len(initial_completed)
     assert sample_model.iteration_count == initial_count + 1
-    assert sample_model.get_comparison_key(item_a, item_b) in sample_model.completed_comparisons
+    assert (
+        sample_model.get_comparison_key(item_a, item_b)
+        in sample_model.completed_comparisons
+    )
 
     # Test invalid response
     with pytest.raises(ValueError):
@@ -333,25 +336,27 @@ def test_comparison_sequence(sample_model):
     """Test the full sequence of getting comparisons and submitting results"""
     seen_comparisons = set()
     max_comparisons = 10
-    
+
     for _ in range(max_comparisons):
         comparison = sample_model.get_next_comparison()
         if comparison is None:  # Stop if confidence threshold reached
             break
-            
+
         # Check comparison is valid
         assert comparison[0] != comparison[1]
         assert all(item in sample_model.items for item in comparison)
-        
+
         # Submit a random response (1, 2, or 3)
         response = random.choice([1, 2, 3])
         sample_model.submit_comparison(*comparison, response)
-        
+
         # Track comparison
         comparison_key = sample_model.get_comparison_key(*comparison)
-        assert comparison_key not in seen_comparisons  # Shouldn't see same comparison twice
+        assert (
+            comparison_key not in seen_comparisons
+        )  # Shouldn't see same comparison twice
         seen_comparisons.add(comparison_key)
-    
+
     # Verify we have some rankings
     rankings = sample_model.compute_ranks()
     assert len(rankings) == len(sample_model.items)

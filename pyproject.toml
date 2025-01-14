@@ -19,7 +19,7 @@ dependencies = [
 ]
 
 [project.scripts]
-resorter = "resorter_py.main:main"
+resorter = "resorter_py.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["resorter_py*"]
