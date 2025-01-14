@@ -1,23 +1,30 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "resorter-py"
-version = "0.8.0"
-description = "A Python implementation of Gwern's resorter for ranking items through enhanced pairwise comparison functionality. Features Bayesian ranking, adaptive learning rates, and multiple output formats."
+version = "0.1.0"
+description = "A Python implementation of Gwern's resorter for ranking items through enhanced pairwise comparison functionality"
 readme = "README.md"
 requires-python = ">=3.12"
 authors = [
     {name = "Justin Malloy"}
 ]
-urls = {Homepage = "https://github.com/brickfrog"}
+urls = {Homepage = "https://github.com/brickfrog/resorter.py"}
 dependencies = [
     "click>=8.1.8",
-    "pandas>=2.2.3",
-    "scipy>=1.15.1",
+    "numpy>=1.24.0",
+    "pandas>=2.2.0",
 ]
 
 [project.scripts]
 resorter = "resorter_py.main:main"
 
+[tool.setuptools.packages.find]
+include = ["resorter_py*"]
+
 [tool.uv]
 dev-dependencies = [
-    "pytest>=8.3.4",
+    "pytest>=8.0.0",
 ]
