@@ -164,4 +164,4 @@ cython_debug/
 *.csv
 
 examples/   
-llm_test.py
+*_example.py
