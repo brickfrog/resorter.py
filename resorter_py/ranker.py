@@ -1,14 +1,11 @@
-import random
-from math import ceil, sqrt
-from typing import Dict, List, Optional, Tuple, Union
+from math import ceil
+from typing import Dict, List, Optional, Tuple, Union, Sequence, Any, Mapping
 import os
-from difflib import SequenceMatcher
 import json
 
 import numpy as np
 import pandas as pd
 from scipy.optimize import minimize
-from scipy.stats import norm
 
 
 def read_input(data_input: str) -> pd.DataFrame:
@@ -38,20 +35,20 @@ def read_input(data_input: str) -> pd.DataFrame:
 
 def parse_input(
     df: pd.DataFrame,
-) -> Tuple[List[Union[int, str]], Optional[Dict[Union[int, str], float]]]:
+) -> Tuple[List[str], Optional[Dict[str, float]]]:
     """
     Parse the input dataframe to separate items and scores.
     Expects DataFrame with 'Item' and optionally 'Score' columns.
     """
     items = df["Item"].tolist()
     if "Score" in df.columns:
-        scores = df.set_index("Item")["Score"].astype(str).to_dict()
+        scores = df.set_index("Item")["Score"].astype(float).to_dict()
     else:
         scores = None
     return items, scores
 
 
-def determine_queries(items: List[Union[int, str]], args_queries: Optional[int]) -> int:
+def determine_queries(items: Sequence[Union[int, str]], args_queries: Optional[int]) -> int:
     """
     Determine the number of queries based on the list length and user input.
     """
@@ -77,7 +74,7 @@ def generate_bin_edges(
 
 
 def assign_custom_quantiles(
-    sorted_ranks: Dict[Union[int, str], float], quantile_cutoffs: List[float]
+    sorted_ranks: Dict[Any, float], quantile_cutoffs: List[float]
 ) -> Dict[Union[int, str], int]:
     sorted_values = [val for _, val in sorted_ranks.items()]
     num_items = len(sorted_values)
@@ -99,7 +96,7 @@ def assign_custom_quantiles(
 
 
 def assign_levels(
-    sorted_ranks: Dict[Union[int, str], float], num_levels: int
+    sorted_ranks: Mapping[Any, float], num_levels: int
 ) -> Dict[Union[int, str], int]:
     total_items = len(sorted_ranks)
     items_per_level = total_items // num_levels
@@ -122,10 +119,10 @@ def assign_levels(
 class BradleyTerryRanker:
     def __init__(
         self,
-        items: List[Union[int, str]],
-        scores: Optional[Dict[Union[int, str], float]] = None,
+        items: Sequence[Union[int, str]],
+        scores: Optional[Mapping[Any, Union[int, float]]] = None,
     ) -> None:
-        self.items: List[Union[int, str]] = items
+        self.items: Sequence[Union[int, str]] = items
         self.item_to_idx = {item: i for i, item in enumerate(items)}
         self.idx_to_item = {i: item for i, item in enumerate(items)}
         self.n_items = len(items)
@@ -185,7 +182,7 @@ class BradleyTerryRanker:
     ) -> None:
         """Update model with a single comparison result"""
         # Save state before update
-        self.history.append((item_a, item_b, self.strengths.copy()))
+        self.history.append((str(item_a), str(item_b), self.strengths.copy()))
 
         i, j = self.item_to_idx[item_a], self.item_to_idx[item_b]
         
@@ -290,8 +287,6 @@ class BradleyTerryRanker:
             comparison_ratio = min(1.0, total_comparisons[item] / max_comparisons) if max_comparisons > 0 else 0.0
             
             # Get relative position certainty
-            ranks = self.compute_ranks()
-            item_rank = ranks[item]
             rank_certainties = []
             for other_item in self.items:
                 if other_item != item:
@@ -303,12 +298,12 @@ class BradleyTerryRanker:
             position_certainty = np.mean(rank_certainties) if rank_certainties else 0.0
             
             # Combine all factors
-            confidence = (1 - uncertainty) * comparison_ratio * (0.5 + 0.5 * position_certainty)
+            confidence = float((1 - uncertainty) * comparison_ratio * (0.5 + 0.5 * position_certainty))
             confidences[item] = max(0.0, min(1.0, confidence))  # Ensure bounds
 
         return confidences
 
-    def get_most_informative_pair(self) -> Tuple[Union[int, str], Union[int, str]]:
+    def get_most_informative_pair(self) -> Tuple[Optional[Union[int, str]], Optional[Union[int, str]]]:
         """Get the pair of items that would provide the most information"""
         # Get all possible pairs and their information values
         pairs = []
@@ -353,7 +348,7 @@ class BradleyTerryRanker:
         pairs.sort(key=lambda x: x[2], reverse=True)
         return pairs[0][0], pairs[0][1]
 
-    def get_most_uncertain_pair(self) -> Tuple[Union[int, str], Union[int, str]]:
+    def get_most_uncertain_pair(self) -> Tuple[Optional[Union[int, str]], Optional[Union[int, str]]]:
         """Get the pair of items with highest combined uncertainty"""
         uncertainties = [(item, self.get_uncertainty(item)) for item in self.items]
         # Add small random noise to break ties

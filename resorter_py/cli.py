@@ -2,7 +2,7 @@ import click
 import sys
 import json
 import pandas as pd
-from typing import Any, Dict, Optional
+from typing import Optional
 
 from .ranker import (
     BradleyTerryRanker,
@@ -107,7 +107,7 @@ class Config:
 def main(
     input_file: str,
     output: str,
-    queries: Optional[int],
+    num_queries: Optional[int],
     levels: Optional[int],
     quantiles: Optional[str],
     progress: bool,
@@ -120,7 +120,7 @@ def main(
     config: Config = Config(
         input_file,
         output,
-        queries,
+        num_queries,
         levels,
         quantiles,
         progress,
@@ -166,6 +166,9 @@ def main(
 
         # Get next comparison
         item_a, item_b = model.get_most_informative_pair()
+        if item_a is None or item_b is None:
+            print("\nNo more pairs to compare!")
+            break
         
         # Ask for comparison
         print(f"\nComparison {i+1}/{queries}")
@@ -173,7 +176,7 @@ def main(
             try:
                 response = input(f"Is '{item_a}' better than '{item_b}'? ")
                 if response in ["1", "2", "3"]:
-                    model.update_single_query(item_a, item_b, int(response))
+                    model.update_single_query(item_a, item_b, int(response))  # Ensure item_a and item_b are valid types
                     i += 1
                     break
                 elif response == "s":
@@ -226,12 +229,12 @@ def main(
 
     # Add level/quantile information if requested
     if config.levels:
-        levels = assign_levels(sorted_ranks, config.levels)
-        output_data["Level"] = [levels[item] for item in output_data["Item"]]
+        level_assignments = assign_levels(sorted_ranks, config.levels)
+        output_data["Level"] = [level_assignments[item] for item in output_data["Item"]]
     elif config.quantiles:
         quantile_cutoffs = [float(x) for x in config.quantiles.split(" ")]
-        quantiles = assign_custom_quantiles(sorted_ranks, quantile_cutoffs)
-        output_data["Quantile"] = [quantiles[item] for item in output_data["Item"]]
+        quantile_assignments = assign_custom_quantiles(sorted_ranks, quantile_cutoffs)
+        output_data["Quantile"] = [quantile_assignments[item] for item in output_data["Item"]]
 
     # Format output based on requested format
     if format == "json":
@@ -267,24 +270,22 @@ def main(
         result = output_data
 
     # Export in the requested format
-    output_data = model.export_rankings(format)
-
     if not config.output:
         if format == "json":
             print(json.dumps(result, indent=2))
         elif format == "markdown":
             print(result)
         else:
-            result.to_csv(sys.stdout, index=False)
+            output_data.to_csv(sys.stdout, index=False)
     else:
         if format == "json":
             with open(output, "w") as f:
                 json.dump(result, f, indent=2)
         elif format == "markdown":
             with open(output, "w") as f:
-                f.write(result)
+                f.write(str(result))
         else:
-            result.to_csv(output, index=False)
+            output_data.to_csv(output, index=False)
 
     # Add visualization if requested
     if config.visualize:

@@ -70,7 +70,7 @@ def test_parse_input():
     df = pd.DataFrame({"Item": ["A", "B"], "Score": [1, 2]})
     items, scores = parse_input(df)
     assert items == ["A", "B"]
-    assert scores == {"A": "1", "B": "2"}
+    assert scores == {"A": 1.0, "B": 2.0}
 
     # Test parsing without scores
     df = pd.DataFrame({"Item": ["A", "B"]})
