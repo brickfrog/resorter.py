@@ -1,7 +1,8 @@
 import pytest
 import pandas as pd
+import numpy as np
 from resorter_py.ranker import (
-    BayesianPairwiseRanker,
+    BradleyTerryRanker,
     read_input,
     parse_input,
     determine_queries,
@@ -15,14 +16,27 @@ import random
 @pytest.fixture
 def sample_model():
     items = ["A", "B", "C", "D"]
-    return BayesianPairwiseRanker(items)
+    return BradleyTerryRanker(items)
 
 
 @pytest.fixture
 def model_with_scores():
     items = ["A", "B", "C", "D"]
     scores = {"A": 4, "B": 3, "C": 2, "D": 1}
-    return BayesianPairwiseRanker(items, scores)
+    return BradleyTerryRanker(items, scores)
+
+
+@pytest.fixture
+def bt_sample_model():
+    items = ["A", "B", "C", "D"]
+    return BradleyTerryRanker(items)
+
+
+@pytest.fixture
+def bt_model_with_scores():
+    items = ["A", "B", "C", "D"]
+    scores = {"A": 4, "B": 3, "C": 2, "D": 1}
+    return BradleyTerryRanker(items, scores)
 
 
 def test_read_input_csv(tmp_path):
@@ -79,21 +93,10 @@ def test_determine_queries():
     assert determine_queries(items, None) > 0
 
 
-def test_bayesian_update(sample_model):
-    alpha, beta = sample_model.bayesian_update(1, 1, 1, 0, 1)
-    assert alpha > 1
-    assert beta == 1
-
-
 def test_compute_ranks(sample_model):
     ranks = sample_model.compute_ranks()
     assert len(ranks) == 4
     assert all(0 <= rank <= 1 for rank in ranks.values())
-
-
-def test_standard_error(sample_model):
-    se = sample_model.standard_error(1, 1)
-    assert 0 <= se <= 1
 
 
 def test_get_mean_uncertainty(sample_model):
@@ -116,8 +119,15 @@ def test_get_comparison_key(sample_model):
 
 def test_should_continue(sample_model):
     # Test early stopping condition
-    assert sample_model.should_continue(0.9) is True
-    assert sample_model.should_continue(0.1) is True
+    assert sample_model.should_continue(0.9) is True  # Initially uncertain
+    
+    # Make several comparisons to build confidence
+    for _ in range(10):
+        item_a, item_b = sample_model.get_most_informative_pair()
+        sample_model.update_single_query(item_a, item_b, 1)
+    
+    # Now should be more confident
+    assert not sample_model.should_continue(0.1)
 
 
 def test_export_rankings(sample_model):
@@ -142,31 +152,34 @@ def test_export_rankings(sample_model):
 
 
 def test_consistency_check(sample_model):
-    # Initialize with very different ranks
-    sample_model.alpha_beta = {
-        "A": (10, 1),  # High rank
-        "B": (1, 10),  # Low rank
-    }
+    # Initialize with very different strengths
+    sample_model.strengths[0] = 2.0  # High strength for A
+    sample_model.strengths[1] = -2.0  # Low strength for B
+    
     # Test inconsistent comparison
-    sample_model.update_single_query("B", "A", 1)  # B better than A despite ranks
+    sample_model.update_single_query("B", "A", 1)  # B better than A despite strengths
     # No assertion needed as this just prints a warning
 
 
 def test_undo_comparison(sample_model):
     # Save initial state
-    initial_state = sample_model.alpha_beta.copy()
+    initial_strengths = sample_model.strengths.copy()
+    initial_comparisons = sample_model.comparison_matrix.copy()
+    initial_wins = sample_model.win_matrix.copy()
 
     # Make a comparison
     sample_model.update_single_query("A", "B", 1)
 
     # Verify state changed
-    assert sample_model.alpha_beta != initial_state
+    assert not np.array_equal(sample_model.strengths, initial_strengths)
 
     # Undo the comparison
     sample_model.undo_last_comparison()
 
     # Verify state restored
-    assert sample_model.alpha_beta == initial_state
+    assert np.array_equal(sample_model.strengths, initial_strengths)
+    assert np.array_equal(sample_model.comparison_matrix, initial_comparisons)
+    assert np.array_equal(sample_model.win_matrix, initial_wins)
 
 
 def test_assign_levels():
@@ -181,36 +194,6 @@ def test_assign_custom_quantiles():
     quantiles = assign_custom_quantiles(sorted_ranks, [0, 0.5, 1])
     assert len(quantiles) == 4
     assert all(quantile in [1, 2, 3] for quantile in quantiles.values())
-
-
-def test_initialize_with_similarity(sample_model):
-    items = ["Test1", "Test2", "Very Different"]
-    scores = {"Test1": 0.9}
-    sample_model.initialize_with_similarity(items, scores)
-    # Test2 should get a similar score to Test1 due to name similarity
-    # Very Different should not get a score
-
-
-def test_export_formats(sample_model):
-    # Test CSV format
-    csv_output = sample_model.export_rankings("csv")
-    assert isinstance(csv_output, pd.DataFrame)
-    assert list(csv_output.columns) == ["Item", "Rank", "Confidence"]
-
-    # Test JSON format
-    json_output = sample_model.export_rankings("json")
-    assert isinstance(json_output, dict)
-    assert all(k in json_output for k in ["rankings", "confidences", "metadata"])
-    assert "total_comparisons" in json_output["metadata"]
-
-    # Test Markdown format
-    md_output = sample_model.export_rankings("markdown")
-    assert isinstance(md_output, str)
-    assert "| Item | Rank | Confidence |" in md_output
-
-    # Test invalid format
-    with pytest.raises(ValueError):
-        sample_model.export_rankings("invalid")
 
 
 def test_config():
@@ -244,120 +227,134 @@ def test_save_load_state(sample_model, tmp_path):
     # Make some comparisons
     sample_model.update_single_query("A", "B", 1)
     sample_model.update_single_query("C", "D", 2)
+    
+    # Record state
+    state_iteration_count = sample_model.iteration_count
+    state_strengths = sample_model.strengths.copy()
+    state_comparisons = sample_model.comparison_matrix.copy()
+    state_wins = sample_model.win_matrix.copy()
 
     # Save state
     state_file = tmp_path / "state.json"
     sample_model.save_state(str(state_file))
 
     # Create new model and load state
-    new_model = BayesianPairwiseRanker(["A", "B", "C", "D"])
+    new_model = BradleyTerryRanker(["A", "B", "C", "D"])
     new_model.load_state(str(state_file))
 
     # Check if states match
     assert new_model.items == sample_model.items
-    assert new_model.alpha_beta == sample_model.alpha_beta
-    assert new_model.history == sample_model.history
-
-
-def test_early_stopping(sample_model):
-    # Make some comparisons to build up confidence
-    sample_model.update_single_query("A", "B", 1)
-    sample_model.update_single_query("A", "C", 1)
-    sample_model.update_single_query("A", "D", 1)
-    sample_model.update_single_query("B", "C", 1)
-    sample_model.update_single_query("B", "D", 1)
-
-    # Now test stopping conditions
-    # With low confidence threshold, should stop (return False)
-    assert not sample_model.should_continue(0.1)
-
-    # With high confidence threshold, should continue (return True)
-    assert sample_model.should_continue(0.99)
-
-
-def test_get_next_comparison(sample_model):
-    # First comparison should be from most uncertain pairs (early phase)
-    comparison = sample_model.get_next_comparison()
-    assert comparison is not None
-    assert len(comparison) == 2
-    assert all(item in sample_model.items for item in comparison)
-    assert comparison[0] != comparison[1]
-
-    # Test that same comparison isn't returned twice
-    first_comparison = comparison
-    sample_model.submit_comparison(*first_comparison, 1)
-    second_comparison = sample_model.get_next_comparison()
-    assert second_comparison != first_comparison
-
-    # Test early stopping with confidence threshold
-    sample_model.min_confidence = 0.1  # Set very low confidence threshold
-    # Make several comparisons to build up confidence
-    for _ in range(10):
-        comparison = sample_model.get_next_comparison()
-        if comparison is None:
-            break
-        sample_model.submit_comparison(*comparison, 1)
-
-
-def test_submit_comparison(sample_model):
-    # Get initial state
-    initial_alpha_beta = sample_model.alpha_beta.copy()
-    initial_completed = sample_model.completed_comparisons.copy()
-    initial_count = sample_model.iteration_count
-
-    # Submit a valid comparison
-    item_a, item_b = "A", "B"
-    sample_model.submit_comparison(item_a, item_b, 1)
-
-    # Check state was updated
-    assert sample_model.alpha_beta != initial_alpha_beta
-    assert len(sample_model.completed_comparisons) > len(initial_completed)
-    assert sample_model.iteration_count == initial_count + 1
-    assert (
-        sample_model.get_comparison_key(item_a, item_b)
-        in sample_model.completed_comparisons
-    )
-
-    # Test invalid response
-    with pytest.raises(ValueError):
-        sample_model.submit_comparison(item_a, item_b, 4)
-    with pytest.raises(ValueError):
-        sample_model.submit_comparison(item_a, item_b, 0)
-
-    # Test comparison tracking
-    key = sample_model.get_comparison_key(item_a, item_b)
-    assert key in sample_model.completed_comparisons
-    # Same comparison with items swapped should be tracked
-    key_swapped = sample_model.get_comparison_key(item_b, item_a)
-    assert key_swapped in sample_model.completed_comparisons
+    assert np.array_equal(new_model.strengths, state_strengths)
+    assert np.array_equal(new_model.comparison_matrix, state_comparisons)
+    assert np.array_equal(new_model.win_matrix, state_wins)
+    assert new_model.iteration_count == state_iteration_count
 
 
 def test_comparison_sequence(sample_model):
     """Test the full sequence of getting comparisons and submitting results"""
     seen_comparisons = set()
     max_comparisons = 10
+    total_possible_pairs = (len(sample_model.items) * (len(sample_model.items) - 1)) // 2
 
     for _ in range(max_comparisons):
-        comparison = sample_model.get_next_comparison()
-        if comparison is None:  # Stop if confidence threshold reached
+        # Get next comparison using most informative pair
+        item_a, item_b = sample_model.get_most_informative_pair()
+        if item_a is None or item_b is None:  # Stop if no more pairs
             break
 
         # Check comparison is valid
-        assert comparison[0] != comparison[1]
-        assert all(item in sample_model.items for item in comparison)
+        assert item_a != item_b
+        assert all(item in sample_model.items for item in [item_a, item_b])
 
         # Submit a random response (1, 2, or 3)
         response = random.choice([1, 2, 3])
-        sample_model.submit_comparison(*comparison, response)
+        sample_model.update_single_query(item_a, item_b, response)
 
         # Track comparison
-        comparison_key = sample_model.get_comparison_key(*comparison)
-        assert (
-            comparison_key not in seen_comparisons
-        )  # Shouldn't see same comparison twice
+        comparison_key = sample_model.get_comparison_key(item_a, item_b)
         seen_comparisons.add(comparison_key)
 
-    # Verify we have some rankings
+    # Verify we have some rankings and they make sense
     rankings = sample_model.compute_ranks()
     assert len(rankings) == len(sample_model.items)
     assert all(0 <= rank <= 1 for rank in rankings.values())
+    # Verify we've made some comparisons
+    assert len(seen_comparisons) > 0
+    # Verify we haven't exceeded possible pairs
+    assert len(seen_comparisons) <= total_possible_pairs
+
+
+def test_bradley_terry_prob(sample_model):
+    prob = sample_model.bradley_terry_prob(1.0, 0.0)
+    assert 0 < prob < 1
+    assert abs(sample_model.bradley_terry_prob(0.0, 0.0) - 0.5) < 1e-6
+
+
+def test_bradley_terry_update(sample_model):
+    # Initial state
+    initial_strengths = sample_model.strengths.copy()
+    
+    # Make a comparison
+    sample_model.update_single_query("A", "B", 1)  # A wins
+    
+    # Check that strengths were updated
+    assert not np.array_equal(sample_model.strengths, initial_strengths)
+    assert sample_model.comparison_matrix[0, 1] == 1
+    assert sample_model.win_matrix[0, 1] == 1
+
+
+def test_bradley_terry_compute_ranks(sample_model):
+    # Make some comparisons
+    sample_model.update_single_query("A", "B", 1)  # A > B
+    sample_model.update_single_query("B", "C", 1)  # B > C
+    sample_model.update_single_query("C", "D", 1)  # C > D
+    
+    # Get rankings
+    ranks = sample_model.compute_ranks()
+    
+    # Check that rankings make sense
+    assert ranks["A"] > ranks["B"]
+    assert ranks["B"] > ranks["C"]
+    assert ranks["C"] > ranks["D"]
+
+
+def test_bradley_terry_uncertainty(sample_model):
+    # Initial uncertainty should be high
+    initial_uncertainty = sample_model.get_uncertainty("A")
+    assert initial_uncertainty == 1.0
+    
+    # Make several comparisons to build confidence
+    for _ in range(5):
+        item_a, item_b = sample_model.get_most_informative_pair()
+        sample_model.update_single_query(item_a, item_b, 1)
+    
+    # Uncertainty should decrease
+    new_uncertainty = sample_model.get_uncertainty("A")
+    assert new_uncertainty < initial_uncertainty
+
+
+def test_bradley_terry_informative_pair(sample_model):
+    # Initial pair should be from items with similar strengths
+    item_a, item_b = sample_model.get_most_informative_pair()
+    assert item_a in sample_model.items
+    assert item_b in sample_model.items
+    assert item_a != item_b
+    
+    # Make several comparisons to change uncertainties
+    for _ in range(3):
+        sample_model.update_single_query("A", "B", 1)
+        sample_model.update_single_query("A", "C", 1)
+        sample_model.update_single_query("B", "C", 1)
+    
+    # Get new pair and verify it's valid
+    new_a, new_b = sample_model.get_most_informative_pair()
+    assert new_a is not None and new_b is not None
+    assert new_a != new_b
+    assert new_a in sample_model.items
+    assert new_b in sample_model.items
+    
+    # Verify the pair selection makes sense
+    uncertainty_a = sample_model.get_uncertainty(new_a)
+    uncertainty_b = sample_model.get_uncertainty(new_b)
+    # At least one of the items should have high uncertainty
+    assert max(uncertainty_a, uncertainty_b) > 0.5

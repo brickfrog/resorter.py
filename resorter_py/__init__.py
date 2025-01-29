@@ -1,5 +1,5 @@
 from .ranker import (
-    BayesianPairwiseRanker,
+    BradleyTerryRanker,
     read_input,
     parse_input,
     determine_queries,
@@ -9,7 +9,7 @@ from .ranker import (
 
 __version__ = "0.1.0"
 __all__ = [
-    "BayesianPairwiseRanker",
+    "BradleyTerryRanker",
     "read_input",
     "parse_input",
     "determine_queries",

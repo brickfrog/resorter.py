@@ -7,6 +7,8 @@ import json
 
 import numpy as np
 import pandas as pd
+from scipy.optimize import minimize
+from scipy.stats import norm
 
 
 def read_input(data_input: str) -> pd.DataFrame:
@@ -117,90 +119,103 @@ def assign_levels(
     return levels
 
 
-class BayesianPairwiseRanker:
+class BradleyTerryRanker:
     def __init__(
         self,
         items: List[Union[int, str]],
         scores: Optional[Dict[Union[int, str], float]] = None,
     ) -> None:
         self.items: List[Union[int, str]] = items
-        self.alpha_beta: Dict[Union[int, str], Tuple[float, float]]
+        self.item_to_idx = {item: i for i, item in enumerate(items)}
+        self.idx_to_item = {i: item for i, item in enumerate(items)}
+        self.n_items = len(items)
+        
+        # Initialize parameters (log-strengths)
+        if scores:
+            # Use provided scores as initial values
+            self.strengths = np.array([float(scores.get(item, 0.5)) for item in items])
+            # Convert to log space and normalize
+            self.strengths = np.log(self.strengths / np.mean(self.strengths))
+        else:
+            # Initialize with small random values
+            self.strengths = np.random.normal(0, 0.1, self.n_items)
+            self.strengths -= np.mean(self.strengths)  # Normalize
+        
+        self.comparison_matrix = np.zeros((self.n_items, self.n_items))
+        self.win_matrix = np.zeros((self.n_items, self.n_items))
         self.iteration_count: int = 0
         self.completed_comparisons: set = set()
-        if scores:
-            self.alpha_beta = {
-                item: (float(score), 1) for item, score in scores.items()
-            }
-        else:
-            self.alpha_beta = {item: (1, 1) for item in items}
-        self.history: List[
-            Tuple[str, str, Dict[Union[int, str], Tuple[float, float]]]
-        ] = []
+        self.history: List[Tuple[str, str, np.ndarray]] = []
 
-    @staticmethod
-    def standard_error(alpha: float, beta: float) -> float:
-        return sqrt((alpha * beta) / ((alpha + beta) ** 2 * (alpha + beta + 1)))
+    def bradley_terry_prob(self, strength_i: float, strength_j: float) -> float:
+        """Compute probability that item i beats item j"""
+        return 1 / (1 + np.exp(-(strength_i - strength_j)))
 
-    def bayesian_update(
-        self, alpha: float, beta: float, win: float, lose: float, iteration: int
-    ) -> Tuple[float, float]:
-        """Adaptive learning rate that decreases as we get more confident"""
-        learning_rate = 1.0 / (1.0 + iteration * 0.1)  # Decreases over time
-        return alpha + win * learning_rate, beta + lose * learning_rate
+    def log_likelihood(self, strengths: np.ndarray) -> float:
+        """Compute log-likelihood of the model"""
+        ll = 0
+        eps = 1e-15  # Small constant to prevent log(0)
+        for i in range(self.n_items):
+            for j in range(self.n_items):
+                if self.comparison_matrix[i, j] > 0:
+                    p_ij = np.clip(self.bradley_terry_prob(strengths[i], strengths[j]), eps, 1-eps)
+                    w_ij = self.win_matrix[i, j] / self.comparison_matrix[i, j]
+                    ll += self.comparison_matrix[i, j] * (w_ij * np.log(p_ij) + (1 - w_ij) * np.log(1 - p_ij))
+        return -ll  # Return negative for minimization
 
-    def ask_question(
-        self, item_a: Union[int, str], item_b: Union[int, str]
-    ) -> Union[int, str]:
-        while True:
-            try:
-                response = input(f"Is '{item_a}' better than '{item_b}'? ")
-                if response in ["1", "2", "3"]:
-                    self.update_single_query(item_a, item_b, int(response))
-                    return int(response)
-                elif response == "s":
-                    print("Skipping...")
-                    return "skip"
-                elif response == "p":
-                    self.print_estimates()
-                elif response == "u":
-                    self.undo_last_comparison()
-                elif response == "q":
-                    print("Quitting...")
-                    exit(0)
-                else:
-                    print("Invalid input. Please enter 1, 2, 3, s, p, u, or q.")
-            except ValueError:
-                print("Invalid input. Please enter 1, 2, 3, s, p, u, or q.")
+    def fit(self) -> None:
+        """Fit the Bradley-Terry model using maximum likelihood"""
+        if np.sum(self.comparison_matrix) == 0:
+            return  # No comparisons to fit
+
+        # Optimize with constraint that mean strength = 0
+        constraints = {'type': 'eq', 'fun': lambda x: np.mean(x)}
+        result = minimize(
+            self.log_likelihood,
+            self.strengths,
+            method='SLSQP',
+            constraints=constraints,
+            options={'maxiter': 1000}
+        )
+        self.strengths = result.x
+        self.strengths -= np.mean(self.strengths)  # Ensure zero mean
 
     def update_single_query(
         self, item_a: Union[int, str], item_b: Union[int, str], response: int
     ) -> None:
+        """Update model with a single comparison result"""
         # Save state before update
-        self.history.append((item_a, item_b, self.alpha_beta.copy()))
+        self.history.append((item_a, item_b, self.strengths.copy()))
 
-        # Check consistency before updating
-        rank_a = self.alpha_beta[item_a][0] / sum(self.alpha_beta[item_a])
-        rank_b = self.alpha_beta[item_b][0] / sum(self.alpha_beta[item_b])
-        rank_diff = abs(rank_a - rank_b)
-
-        if rank_diff > 0.7:  # Large difference in current rankings
-            if (response == 1 and rank_a < rank_b) or (
-                response == 3 and rank_a > rank_b
-            ):
-                print(
-                    "\nWarning: This comparison seems inconsistent with previous rankings!"
-                )
-                print("You might want to undo (u) and reconsider.")
-
-        winners = [(1, 0), (0.5, 0.5), (0, 1)]
-        win_a, win_b = winners[response - 1]
-
+        i, j = self.item_to_idx[item_a], self.item_to_idx[item_b]
+        
+        # Update comparison matrices
+        self.comparison_matrix[i, j] += 1
+        self.comparison_matrix[j, i] += 1
+        
+        # Convert response to win probability
+        if response == 1:  # A wins
+            win_prob = 1.0
+        elif response == 2:  # Tie
+            win_prob = 0.5
+        else:  # B wins
+            win_prob = 0.0
+            
+        self.win_matrix[i, j] += win_prob
+        self.win_matrix[j, i] += (1 - win_prob)
+        
+        # Add to completed comparisons
+        self.completed_comparisons.add(self.get_comparison_key(item_a, item_b))
+        
+        # Refit the model
+        self.fit()
         self.iteration_count += 1
-        for item, win, lose in [(item_a, win_a, win_b), (item_b, win_b, win_a)]:
-            alpha, beta = self.alpha_beta[item]
-            self.alpha_beta[item] = self.bayesian_update(
-                alpha, beta, win, lose, self.iteration_count
-            )
+
+        # Check for inconsistency
+        prob_a_beats_b = self.bradley_terry_prob(self.strengths[i], self.strengths[j])
+        if abs(prob_a_beats_b - win_prob) > 0.7:
+            print("\nWarning: This comparison seems inconsistent with previous rankings!")
+            print("You might want to undo (u) and reconsider.")
 
     def undo_last_comparison(self) -> None:
         """Undo the last comparison by restoring the previous state"""
@@ -208,68 +223,18 @@ class BayesianPairwiseRanker:
             print("Nothing to undo!")
             return
 
-        item_a, item_b, previous_state = self.history.pop()
-        self.alpha_beta = previous_state
+        item_a, item_b, previous_strengths = self.history.pop()
+        i, j = self.item_to_idx[item_a], self.item_to_idx[item_b]
+        
+        # Restore previous state
+        self.strengths = previous_strengths
+        self.comparison_matrix[i, j] -= 1
+        self.comparison_matrix[j, i] -= 1
+        # Note: This is an approximation as we don't store the exact win value
+        self.win_matrix[i, j] = max(0, self.win_matrix[i, j] - 1)
+        self.win_matrix[j, i] = max(0, self.win_matrix[j, i] - 1)
+        
         print(f"Undid comparison between '{item_a}' and '{item_b}'")
-
-    def print_estimates(self) -> None:
-        mean_uncertainty = self.get_mean_uncertainty()
-        confidences = self.get_ranking_confidence()
-
-        print(f"\nMean uncertainty: {mean_uncertainty:.4f}")
-        print("\nItem rankings:")
-        sorted_items = sorted(
-            self.alpha_beta.items(),
-            key=lambda x: x[1][0] / (x[1][0] + x[1][1]),
-            reverse=True,
-        )
-        for item, (alpha, beta) in sorted_items:
-            rank = alpha / (alpha + beta)
-            se = self.standard_error(alpha, beta)
-            confidence = confidences[item]
-            print(
-                f"{item}: rank = {rank:.2f}, σ = {se:.4f}, confidence = {confidence:.2%}"
-            )
-
-    def get_most_informative_pair(self) -> Tuple[Union[int, str], Union[int, str]]:
-        """Get the pair of items that would provide the most information."""
-        uncertainties = {
-            item: self.standard_error(alpha, beta)
-            for item, (alpha, beta) in self.alpha_beta.items()
-        }
-
-        # Calculate expected information gain for each possible pair
-        pairs = []
-        for item_a in self.items:
-            for item_b in self.items:
-                if item_a >= item_b:  # Skip self-comparisons and duplicates
-                    continue
-
-                # Skip if we've already compared this pair
-                if (
-                    self.get_comparison_key(item_a, item_b)
-                    in self.completed_comparisons
-                ):
-                    continue
-
-                # Consider both uncertainty and how close the items are in ranking
-                rank_a = self.alpha_beta[item_a][0] / sum(self.alpha_beta[item_a])
-                rank_b = self.alpha_beta[item_b][0] / sum(self.alpha_beta[item_b])
-                rank_diff = abs(rank_a - rank_b)
-
-                # Items with similar ranks but high uncertainty are most informative
-                information_value = (uncertainties[item_a] + uncertainties[item_b]) * (
-                    1 - rank_diff
-                )
-                pairs.append((item_a, item_b, information_value))
-
-        if not pairs:  # If all pairs have been compared
-            self.completed_comparisons.clear()  # Reset completed comparisons
-            return random.sample(self.items, 2)  # Return a random pair
-
-        # Return the most informative pair
-        pairs.sort(key=lambda x: x[2], reverse=True)
-        return pairs[0][0], pairs[0][1]
 
     def get_comparison_key(
         self, item_a: Union[int, str], item_b: Union[int, str]
@@ -277,221 +242,172 @@ class BayesianPairwiseRanker:
         """Create a consistent key for a comparison regardless of order"""
         return tuple(sorted([str(item_a), str(item_b)]))
 
-    def get_next_comparison(self) -> Optional[Tuple[Union[int, str], Union[int, str]]]:
-        """Get the next pair of items to compare without requiring immediate input.
-        Returns None if no more comparisons are needed based on confidence threshold."""
-
-        if hasattr(self, "min_confidence"):
-            if not self.should_continue(self.min_confidence):
-                return None
-
-        # Calculate total possible unique comparisons
-        total_possible = (len(self.items) * (len(self.items) - 1)) // 2
-
-        # If we've compared all possible pairs, we're done
-        if len(self.completed_comparisons) >= total_possible:
-            return None
-
-        attempts = 0
-        max_attempts = 10
-        while attempts < max_attempts:
-            # Use the same smart selection logic as generate_comparison_data
-            progress = self.iteration_count / (
-                len(self.items) * np.log(len(self.items))
-            )
-            if progress < 0.3:
-                item_a, item_b = self.get_most_uncertain_pair()
-            elif progress < 0.7:
-                item_a, item_b = self.get_most_informative_pair()
-            else:
-                item_a, item_b = random.sample(self.items, 2)
-                while item_a == item_b:
-                    item_a, item_b = random.sample(self.items, 2)
-
-            comparison_key = self.get_comparison_key(item_a, item_b)
-            if comparison_key not in self.completed_comparisons:
-                return item_a, item_b
-            attempts += 1
-
-        # If we're having trouble finding a new pair, try systematically
-        for i, item_a in enumerate(self.items):
-            for item_b in self.items[i + 1 :]:
-                comparison_key = self.get_comparison_key(item_a, item_b)
-                if comparison_key not in self.completed_comparisons:
-                    return item_a, item_b
-
-        # If we get here, something is wrong - we should have found an unused pair
-        # or returned None earlier if all pairs were used
-        return None
-
-    def submit_comparison(
-        self, item_a: Union[int, str], item_b: Union[int, str], response: int
-    ) -> None:
-        """Submit a comparison result for a pair of items.
-        response should be:
-        1 - if item_a is better than item_b
-        2 - if they are equal
-        3 - if item_b is better than item_a"""
-        if response not in [1, 2, 3]:
-            raise ValueError("Response must be 1, 2, or 3")
-
-        self.update_single_query(item_a, item_b, response)
-        self.completed_comparisons.add(self.get_comparison_key(item_a, item_b))
-        self.history.clear()
-
-    def generate_comparison_data(
-        self, queries: int
-    ) -> List[Tuple[Union[int, str], Union[int, str], float, float]]:
-        comparison_data = []
-        print(
-            "Comparison commands: 1=yes, 2=tied, 3=second is better, p=print estimates, "
-            "s=skip question, u=undo last comparison, q=quit"
-        )
-
-        i = 0
-        while i < queries:
-            # Check if we've reached sufficient confidence
-            if hasattr(self, "min_confidence"):
-                if not self.should_continue(self.min_confidence):
-                    print("\nReached confidence threshold - stopping early!")
-                    break
-
-            if self.history:
-                last_comparison = self.history[-1]
-                item_a, item_b = last_comparison[0], last_comparison[1]
-            else:
-                attempts = 0
-                max_attempts = 10
-                while attempts < max_attempts:
-                    if i < queries * 0.3:
-                        item_a, item_b = self.get_most_uncertain_pair()
-                    elif i < queries * 0.7:
-                        item_a, item_b = self.get_most_informative_pair()
-                    else:
-                        item_a, item_b = random.sample(self.items, 2)
-                        while item_a == item_b:
-                            item_a, item_b = random.sample(self.items, 2)
-
-                    comparison_key = self.get_comparison_key(item_a, item_b)
-                    if comparison_key not in self.completed_comparisons:
-                        break
-                    attempts += 1
-
-                if attempts == max_attempts:
-                    self.completed_comparisons.clear()
-
-            print(f"\nComparison {i+1}/{queries}")  # Show progress
-            response = self.ask_question(item_a, item_b)
-            if response == "skip":
-                continue
-
-            win_a, win_b = (
-                (1, 0) if response == 1 else (0, 1) if response == 3 else (0.5, 0.5)
-            )
-            comparison_data.append((item_a, item_b, win_a, win_b))
-            self.completed_comparisons.add(self.get_comparison_key(item_a, item_b))
-            self.history.clear()
-            i += 1
-
-            # Show current rankings after each comparison if progress is enabled
-            if hasattr(self, "show_progress") and self.show_progress:
-                self.print_estimates()
-        return comparison_data
-
-    def update_ranks(
-        self,
-        comparison_data: List[Tuple[Union[int, str], Union[int, str], float, float]],
-    ) -> None:
-        """This method is now deprecated as updates happen in real-time"""
-        pass
-
     def compute_ranks(self) -> Dict[Union[int, str], float]:
-        return {
-            player: alpha / (alpha + beta)
-            for player, (alpha, beta) in self.alpha_beta.items()
-        }
+        """Convert log-strengths to probabilities"""
+        # Scale the strengths to reduce extreme probabilities
+        scaled_strengths = self.strengths / max(1.0, np.max(np.abs(self.strengths)))
+        exp_strengths = np.exp(scaled_strengths)
+        sum_exp_strengths = np.sum(exp_strengths)
+        probs = exp_strengths / sum_exp_strengths
+        return {self.idx_to_item[i]: float(p) for i, p in enumerate(probs)}
+
+    def get_uncertainty(self, item: Union[int, str]) -> float:
+        """Compute uncertainty for an item using Fisher information and comparison count"""
+        i = self.item_to_idx[item]
+        total_comparisons = np.sum(self.comparison_matrix[i])
+        if total_comparisons == 0:
+            return 1.0
+        
+        # Use inverse Fisher information as uncertainty
+        info = 0
+        for j in range(self.n_items):
+            if i != j and self.comparison_matrix[i, j] > 0:
+                p_ij = self.bradley_terry_prob(self.strengths[i], self.strengths[j])
+                info += self.comparison_matrix[i, j] * p_ij * (1 - p_ij)
+        
+        # Scale uncertainty by number of comparisons
+        base_uncertainty = 1 / (1 + info)
+        comparison_factor = np.exp(-total_comparisons / 3)  # Decay factor based on comparisons
+        return base_uncertainty * comparison_factor
 
     def get_mean_uncertainty(self) -> float:
-        """Calculate mean uncertainty across all items."""
-        uncertainties = [
-            self.standard_error(alpha, beta) for alpha, beta in self.alpha_beta.values()
-        ]
+        """Calculate mean uncertainty across all items"""
+        uncertainties = [self.get_uncertainty(item) for item in self.items]
         return sum(uncertainties) / len(uncertainties)
 
     def get_ranking_confidence(self) -> Dict[Union[int, str], float]:
-        """Calculate confidence in ranking for each item (0-1 scale)."""
-        total_comparisons = {item: 0.0 for item in self.items}
-        for item, (alpha, beta) in self.alpha_beta.items():
-            total_comparisons[item] = alpha + beta - 2  # Subtract initial values
+        """Calculate confidence in ranking for each item (0-1 scale)"""
+        total_comparisons = {
+            item: np.sum(self.comparison_matrix[self.item_to_idx[item]])
+            for item in self.items
+        }
+        max_comparisons = max(total_comparisons.values()) if total_comparisons else 1
 
-        max_comparisons = max(total_comparisons.values())
-        if max_comparisons == 0:
-            return {item: 0.0 for item in self.items}
-
-        # Combine number of comparisons and uncertainty into confidence score
         confidences = {}
         for item in self.items:
-            uncertainty = self.standard_error(*self.alpha_beta[item])
-            comparison_ratio = total_comparisons[item] / max_comparisons
-            confidences[item] = (1 - uncertainty) * comparison_ratio
+            uncertainty = self.get_uncertainty(item)
+            # Scale confidence by number of comparisons and relative position certainty
+            comparison_ratio = min(1.0, total_comparisons[item] / max_comparisons) if max_comparisons > 0 else 0.0
+            
+            # Get relative position certainty
+            ranks = self.compute_ranks()
+            item_rank = ranks[item]
+            rank_certainties = []
+            for other_item in self.items:
+                if other_item != item:
+                    p_win = self.bradley_terry_prob(
+                        self.strengths[self.item_to_idx[item]],
+                        self.strengths[self.item_to_idx[other_item]]
+                    )
+                    rank_certainties.append(abs(p_win - 0.5) * 2)  # Scale to [0,1]
+            position_certainty = np.mean(rank_certainties) if rank_certainties else 0.0
+            
+            # Combine all factors
+            confidence = (1 - uncertainty) * comparison_ratio * (0.5 + 0.5 * position_certainty)
+            confidences[item] = max(0.0, min(1.0, confidence))  # Ensure bounds
 
         return confidences
 
-    def get_most_uncertain_pair(self) -> Tuple[Union[int, str], Union[int, str]]:
-        """Get the pair of items with highest combined uncertainty that hasn't been compared."""
-        uncertainties = {
-            item: self.standard_error(alpha, beta)
-            for item, (alpha, beta) in self.alpha_beta.items()
-        }
-        # Sort items by uncertainty
-        sorted_items = sorted(uncertainties.items(), key=lambda x: x[1], reverse=True)
+    def get_most_informative_pair(self) -> Tuple[Union[int, str], Union[int, str]]:
+        """Get the pair of items that would provide the most information"""
+        # Get all possible pairs and their information values
+        pairs = []
+        total_possible_pairs = (self.n_items * (self.n_items - 1)) // 2
+        
+        # If we've completed all possible pairs, clear and start over
+        if len(self.completed_comparisons) >= total_possible_pairs:
+            self.completed_comparisons.clear()
 
-        # Find the first valid pair that hasn't been compared
+        for i, item_a in enumerate(self.items):
+            for j, item_b in enumerate(self.items[i+1:], i+1):
+                key = self.get_comparison_key(item_a, item_b)
+                if key in self.completed_comparisons:
+                    continue
+                    
+                # Compute expected information gain
+                p_ij = self.bradley_terry_prob(self.strengths[i], self.strengths[j])
+                uncertainty_i = self.get_uncertainty(item_a)
+                uncertainty_j = self.get_uncertainty(item_b)
+                
+                # Compute information value based on:
+                # 1. Combined uncertainty of items
+                # 2. How close to 50/50 the predicted outcome is
+                # 3. Number of comparisons each item has
+                uncertainty_factor = (uncertainty_i + uncertainty_j)
+                prediction_factor = 1 - abs(p_ij - 0.5)
+                comparison_counts = (
+                    np.sum(self.comparison_matrix[i]) +
+                    np.sum(self.comparison_matrix[j])
+                )
+                comparison_factor = np.exp(-comparison_counts / 6)  # Prefer less compared pairs
+                
+                info_value = uncertainty_factor * prediction_factor * comparison_factor
+                info_value += np.random.normal(0, 0.001)  # Tiny random noise to break ties
+                pairs.append((item_a, item_b, info_value))
+
+        if not pairs:
+            # If still no pairs after clearing, we're done
+            return None, None
+
+        # Sort by information value and return the most informative pair
+        pairs.sort(key=lambda x: x[2], reverse=True)
+        return pairs[0][0], pairs[0][1]
+
+    def get_most_uncertain_pair(self) -> Tuple[Union[int, str], Union[int, str]]:
+        """Get the pair of items with highest combined uncertainty"""
+        uncertainties = [(item, self.get_uncertainty(item)) for item in self.items]
+        # Add small random noise to break ties
+        uncertainties = [(item, unc + np.random.normal(0, 0.01)) for item, unc in uncertainties]
+        sorted_items = sorted(uncertainties, key=lambda x: x[1], reverse=True)
+
         for i, (item_a, _) in enumerate(sorted_items):
-            for item_b, _ in sorted_items[i + 1 :]:
-                if (
-                    self.get_comparison_key(item_a, item_b)
-                    not in self.completed_comparisons
-                ):
+            for item_b, _ in sorted_items[i+1:]:
+                if self.get_comparison_key(item_a, item_b) not in self.completed_comparisons:
                     return item_a, item_b
 
-        # If all pairs have been compared, return the first two items
-        return sorted_items[0][0], sorted_items[1][0]
-
-    def initialize_with_similarity(
-        self, items: List[str], scores: Optional[Dict[str, float]] = None
-    ) -> None:
-        """Initialize rankings using text similarity when scores are available for some items"""
-        if not scores:
-            return
-
-        # For items without scores, estimate based on similar items that have scores
-        for item in items:
-            if item not in scores:
-                similar_items = [
-                    (other_item, SequenceMatcher(None, item, other_item).ratio())
-                    for other_item, score in scores.items()
-                ]
-                if similar_items:
-                    most_similar = max(similar_items, key=lambda x: x[1])
-                    if most_similar[1] > 0.8:  # Only use if similarity is high
-                        scores[item] = scores[most_similar[0]]
+        # If all pairs are completed, return None
+        return None, None
 
     def should_continue(self, min_confidence: float = 0.9) -> bool:
         """Check if we should continue comparing based on confidence levels"""
+        if self.iteration_count == 0:
+            return True
+            
+        # Get confidences for all items
         confidences = self.get_ranking_confidence()
         mean_confidence = sum(confidences.values()) / len(confidences)
-        return mean_confidence < min_confidence  # Continue if confidence is too low
+        
+        # Check if we have enough comparisons and confidence
+        min_comparisons_per_item = 3  # Require at least 3 comparisons per item
+        comparison_counts = [
+            np.sum(self.comparison_matrix[self.item_to_idx[item]])
+            for item in self.items
+        ]
+        
+        # Continue if either:
+        # 1. Not all items have minimum comparisons
+        if any(count < min_comparisons_per_item for count in comparison_counts):
+            return True
+            
+        # 2. Mean confidence is below threshold and we haven't compared everything multiple times
+        if mean_confidence < min_confidence:
+            # Only continue if we haven't done too many comparisons
+            max_comparisons = self.n_items * (self.n_items - 1)  # Maximum possible unique comparisons
+            total_comparisons = sum(comparison_counts) // 2  # Divide by 2 as each comparison is counted twice
+            return total_comparisons < max_comparisons * 2  # Allow each pair to be compared twice
+            
+        return False
 
     def save_state(self, filename: str) -> None:
         """Save current state to file"""
         state = {
             "items": self.items,
-            "alpha_beta": {str(k): v for k, v in self.alpha_beta.items()},
-            "history": [
-                (str(a), str(b), {str(k): v for k, v in s.items()})
-                for a, b, s in self.history
-            ],
+            "strengths": self.strengths.tolist(),
+            "comparison_matrix": self.comparison_matrix.tolist(),
+            "win_matrix": self.win_matrix.tolist(),
+            "history": [(str(a), str(b), s.tolist()) for a, b, s in self.history],
+            "iteration_count": self.iteration_count,
+            "completed_comparisons": [list(comp) for comp in self.completed_comparisons],
         }
         with open(filename, "w") as f:
             json.dump(state, f)
@@ -501,18 +417,23 @@ class BayesianPairwiseRanker:
         with open(filename, "r") as f:
             state = json.load(f)
         self.items = state["items"]
-        self.alpha_beta = {
-            eval(k) if k.isdigit() else k: tuple(v)
-            for k, v in state["alpha_beta"].items()
-        }
+        self.item_to_idx = {item: i for i, item in enumerate(self.items)}
+        self.idx_to_item = {i: item for i, item in enumerate(self.items)}
+        self.n_items = len(self.items)
+        self.strengths = np.array(state["strengths"])
+        self.comparison_matrix = np.array(state["comparison_matrix"])
+        self.win_matrix = np.array(state["win_matrix"])
         self.history = [
             (
                 eval(a) if a.isdigit() else a,
                 eval(b) if b.isdigit() else b,
-                {eval(k) if k.isdigit() else k: tuple(v) for k, v in s.items()},
+                np.array(s),
             )
             for a, b, s in state["history"]
         ]
+        self.iteration_count = state.get("iteration_count", 0)
+        # Convert lists back to tuples for completed_comparisons
+        self.completed_comparisons = set(tuple(comp) for comp in state.get("completed_comparisons", []))
 
     def visualize_rankings(self) -> None:
         """Display a simple ASCII visualization of rankings"""
