@@ -228,7 +228,7 @@ class BradleyTerryRanker:
             return
 
         item_a, item_b, previous_strengths, previous_comparison_matrix, previous_win_matrix = self.history.pop()
-        i, j = self.item_to_idx[item_a], self.item_to_idx[item_b]
+        _i, _j = self.item_to_idx[item_a], self.item_to_idx[item_b]
         
         # Restore previous state
         self.strengths = previous_strengths
@@ -261,24 +261,89 @@ class BradleyTerryRanker:
             rankings[self.idx_to_item[idx]] = rank
         return rankings
 
+    def compute_fisher_information_matrix(self) -> np.ndarray:
+        """Compute the Fisher Information Matrix for parameter uncertainty"""
+        if np.sum(self.comparison_matrix) == 0:
+            return np.eye(self.n_items) * 1e-6  # Small diagonal matrix for no comparisons
+            
+        # Fisher Information Matrix: F_ij = Σ_k n_ik * p_ik * (1-p_ik) * (δ_ij - δ_kj)
+        # where δ_ij is Kronecker delta
+        fim = np.zeros((self.n_items, self.n_items))
+        
+        for i in range(self.n_items):
+            for j in range(self.n_items):
+                for k in range(self.n_items):
+                    if i != k and self.comparison_matrix[i, k] > 0:
+                        p_ik = self.bradley_terry_prob(self.strengths[i], self.strengths[k])
+                        n_ik = self.comparison_matrix[i, k]
+                        
+                        if i == j:  # Diagonal elements
+                            fim[i, j] += n_ik * p_ik * (1 - p_ik)
+                        elif j == k:  # Off-diagonal elements  
+                            fim[i, j] -= n_ik * p_ik * (1 - p_ik)
+        
+        return fim
+
+    def get_parameter_standard_errors(self) -> np.ndarray:
+        """Get standard errors for strength parameters using Fisher Information Matrix"""
+        fim = self.compute_fisher_information_matrix()
+        
+        # Handle constraint that sum of parameters = 0
+        # Remove one parameter (last one) and compute inverse
+        try:
+            fim_reduced = fim[:-1, :-1]  # Remove last row and column
+            if np.linalg.det(fim_reduced) < 1e-10:
+                # Matrix is near-singular, return high uncertainty
+                return np.full(self.n_items, 1.0)
+                
+            inv_fim = np.linalg.inv(fim_reduced)
+            se_reduced = np.sqrt(np.diag(inv_fim))
+            
+            # Add back the constrained parameter (its SE is computed from others)
+            # For zero-sum constraint: var(β_n) = var(sum of other β_i)
+            se_last = np.sqrt(np.sum(inv_fim))
+            se_full = np.append(se_reduced, se_last)
+            
+            return se_full
+            
+        except (np.linalg.LinAlgError, ValueError):
+            # If matrix inversion fails, return high uncertainty
+            return np.full(self.n_items, 1.0)
+
     def get_uncertainty(self, item: Union[int, str]) -> float:
-        """Compute uncertainty for an item using Fisher information and comparison count"""
+        """Compute uncertainty for an item using proper Fisher Information Matrix approach"""
         i = self.item_to_idx[item]
-        total_comparisons = np.sum(self.comparison_matrix[i])
-        if total_comparisons == 0:
-            return 1.0
         
-        # Use inverse Fisher information as uncertainty
-        info = 0
-        for j in range(self.n_items):
-            if i != j and self.comparison_matrix[i, j] > 0:
-                p_ij = self.bradley_terry_prob(self.strengths[i], self.strengths[j])
-                info += self.comparison_matrix[i, j] * p_ij * (1 - p_ij)
+        if np.sum(self.comparison_matrix) == 0:
+            return 1.0  # Maximum uncertainty with no comparisons
+            
+        # Get standard error from Fisher Information Matrix
+        standard_errors = self.get_parameter_standard_errors()
+        se = standard_errors[i]
         
-        # Scale uncertainty by number of comparisons
-        base_uncertainty = 1 / (1 + info)
-        comparison_factor = np.exp(-total_comparisons / 3)  # Decay factor based on comparisons
-        return base_uncertainty * comparison_factor
+        # Convert standard error to 0-1 uncertainty scale
+        # Using a sigmoid-like transformation: uncertainty = se / (1 + se)
+        uncertainty = se / (1 + se)
+        return float(np.clip(uncertainty, 0.0, 1.0))
+
+    def get_confidence_intervals(self, alpha: float = 0.05) -> Dict[Union[int, str], Tuple[float, float]]:
+        """Get confidence intervals for strength parameters"""
+        standard_errors = self.get_parameter_standard_errors()
+        z_score = 1.96  # For 95% confidence interval (alpha=0.05)
+        
+        if alpha != 0.05:
+            from scipy.stats import norm
+            z_score = norm.ppf(1 - alpha/2)
+        
+        confidence_intervals = {}
+        for i, item in enumerate(self.items):
+            se = standard_errors[i]
+            strength = self.strengths[i]
+            ci_lower = strength - z_score * se
+            ci_upper = strength + z_score * se
+            confidence_intervals[item] = (float(ci_lower), float(ci_upper))
+            
+        return confidence_intervals
 
     def get_mean_uncertainty(self) -> float:
         """Calculate mean uncertainty across all items"""

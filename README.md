@@ -29,15 +29,50 @@ Options:
                                 discretized into 1–l levels.
   --quantiles TEXT              What fraction to allocate to each level;
                                 space-separated; overrides `--levels`.
-  --progress                    Print the mean standard error to stdout
+  --progress                    Print the mean uncertainty and model diagnostics 
+                                during ranking
   --save-state TEXT             Save the current state to this file
   --load-state TEXT             Load the previous state from this file
   --min-confidence FLOAT        Minimum confidence level before stopping (0-1)
+  --confidence-intervals        Include confidence intervals in output
+  --diagnostics                 Show model diagnostics (AIC, log-likelihood, etc.)
   --visualize                   Show ASCII visualization of rankings
   --format [csv|json|markdown]  Output format for the rankings
   --help                        Show this message and exit.
 ```
 
+```bash
+uv run resorter --input in.csv
+
+Number of queries: 7
+Comparison commands: 1=yes, 2=tied, 3=second is better, p=print estimates, s=skip question, u=undo last comparison, q=quit
+
+Comparison 1/7
+Is 'Pinky' better than 'Blinky'? 1
+
+Comparison 2/7
+Is 'Inky' better than 'Clyde'? 3
+
+Comparison 3/7
+Is 'Pinky' better than 'Clyde'? 1
+
+Comparison 4/7
+Is 'Inky' better than 'Blinky'? 2
+
+Comparison 5/7
+Is 'Blinky' better than 'Clyde'? 1
+
+Comparison 6/7
+Is 'Inky' better than 'Pinky'? 3
+
+Comparison 7/7
+Is 'Blinky' better than 'Clyde'? 1
+Item,Rank,Confidence,Uncertainty
+Pinky,0.5581308097197633,0.37499999996018174,0.5
+Blinky,0.15703825844408328,0.4480726715134852,0.5
+Clyde,0.1444622888556121,0.4057839646372169,0.5
+Inky,0.14036864298054136,0.31250070892832205,0.5
+```
 
 ## Acknowledgments
 

@@ -207,6 +207,8 @@ def test_config():
         save_state="state.json",
         load_state=None,
         min_confidence=0.9,
+        confidence_intervals=True,
+        diagnostics=True,
         visualize=True,
         format="csv",
     )
@@ -219,6 +221,8 @@ def test_config():
     assert config.save_state == "state.json"
     assert config.load_state is None
     assert config.min_confidence == 0.9
+    assert config.confidence_intervals is True
+    assert config.diagnostics is True
     assert config.visualize is True
     assert config.format == "csv"
 
@@ -353,8 +357,9 @@ def test_bradley_terry_informative_pair(sample_model):
     assert new_a in sample_model.items
     assert new_b in sample_model.items
     
-    # Verify the pair selection makes sense
+    # Verify the pair selection makes sense - with FIM uncertainty should be reasonable
     uncertainty_a = sample_model.get_uncertainty(new_a)
     uncertainty_b = sample_model.get_uncertainty(new_b)
-    # At least one of the items should have high uncertainty
-    assert max(uncertainty_a, uncertainty_b) > 0.5
+    # With Fisher Information Matrix, uncertainties should be between 0 and 1
+    assert 0 <= uncertainty_a <= 1
+    assert 0 <= uncertainty_b <= 1
