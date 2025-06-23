@@ -129,20 +129,22 @@ class BradleyTerryRanker:
         
         # Initialize parameters (log-strengths)
         if scores:
-            # Use provided scores as initial values
-            self.strengths = np.array([float(scores.get(item, 0.5)) for item in items])
-            # Convert to log space and normalize
-            self.strengths = np.log(self.strengths / np.mean(self.strengths))
+            # Use provided scores as initial values, ensuring they're positive
+            raw_scores = np.array([float(scores.get(item, 1.0)) for item in items])
+            # Ensure all scores are positive for log transformation
+            raw_scores = np.maximum(raw_scores, 1e-6)  # Minimum positive value
+            self.strengths = np.log(raw_scores / np.mean(raw_scores))
         else:
             # Initialize with small random values
             self.strengths = np.random.normal(0, 0.1, self.n_items)
-            self.strengths -= np.mean(self.strengths)  # Normalize
+            
+        self.strengths -= np.mean(self.strengths)  # Normalize to zero mean
         
         self.comparison_matrix = np.zeros((self.n_items, self.n_items))
         self.win_matrix = np.zeros((self.n_items, self.n_items))
         self.iteration_count: int = 0
         self.completed_comparisons: set = set()
-        self.history: List[Tuple[str, str, np.ndarray]] = []
+        self.history: List[Tuple[str, str, np.ndarray, np.ndarray, np.ndarray]] = []
 
     def bradley_terry_prob(self, strength_i: float, strength_j: float) -> float:
         """Compute probability that item i beats item j"""
@@ -172,17 +174,22 @@ class BradleyTerryRanker:
             self.strengths,
             method='SLSQP',
             constraints=constraints,
-            options={'maxiter': 1000}
+            options={'maxiter': 1000, 'ftol': 1e-9}
         )
+        
+        if not result.success:
+            print(f"Warning: Optimization did not converge: {result.message}")
+            
         self.strengths = result.x
         self.strengths -= np.mean(self.strengths)  # Ensure zero mean
+        self.last_optimization_result = result  # Store for diagnostics
 
     def update_single_query(
         self, item_a: Union[int, str], item_b: Union[int, str], response: int
     ) -> None:
         """Update model with a single comparison result"""
         # Save state before update
-        self.history.append((str(item_a), str(item_b), self.strengths.copy()))
+        self.history.append((str(item_a), str(item_b), self.strengths.copy(), self.comparison_matrix.copy(), self.win_matrix.copy()))
 
         i, j = self.item_to_idx[item_a], self.item_to_idx[item_b]
         
@@ -220,16 +227,13 @@ class BradleyTerryRanker:
             print("Nothing to undo!")
             return
 
-        item_a, item_b, previous_strengths = self.history.pop()
+        item_a, item_b, previous_strengths, previous_comparison_matrix, previous_win_matrix = self.history.pop()
         i, j = self.item_to_idx[item_a], self.item_to_idx[item_b]
         
         # Restore previous state
         self.strengths = previous_strengths
-        self.comparison_matrix[i, j] -= 1
-        self.comparison_matrix[j, i] -= 1
-        # Note: This is an approximation as we don't store the exact win value
-        self.win_matrix[i, j] = max(0, self.win_matrix[i, j] - 1)
-        self.win_matrix[j, i] = max(0, self.win_matrix[j, i] - 1)
+        self.comparison_matrix = previous_comparison_matrix
+        self.win_matrix = previous_win_matrix
         
         print(f"Undid comparison between '{item_a}' and '{item_b}'")
 
@@ -247,6 +251,15 @@ class BradleyTerryRanker:
         sum_exp_strengths = np.sum(exp_strengths)
         probs = exp_strengths / sum_exp_strengths
         return {self.idx_to_item[i]: float(p) for i, p in enumerate(probs)}
+
+    def compute_ordinal_rankings(self) -> Dict[Union[int, str], int]:
+        """Convert strengths to ordinal rankings (1st, 2nd, 3rd, etc.)"""
+        # Sort by strength (highest first)
+        sorted_indices = np.argsort(-self.strengths)  # Negative for descending order
+        rankings = {}
+        for rank, idx in enumerate(sorted_indices, 1):
+            rankings[self.idx_to_item[idx]] = rank
+        return rankings
 
     def get_uncertainty(self, item: Union[int, str]) -> float:
         """Compute uncertainty for an item using Fisher information and comparison count"""
@@ -400,7 +413,7 @@ class BradleyTerryRanker:
             "strengths": self.strengths.tolist(),
             "comparison_matrix": self.comparison_matrix.tolist(),
             "win_matrix": self.win_matrix.tolist(),
-            "history": [(str(a), str(b), s.tolist()) for a, b, s in self.history],
+            "history": [(str(a), str(b), s.tolist(), cm.tolist(), wm.tolist()) for a, b, s, cm, wm in self.history],
             "iteration_count": self.iteration_count,
             "completed_comparisons": [list(comp) for comp in self.completed_comparisons],
         }
@@ -423,8 +436,10 @@ class BradleyTerryRanker:
                 eval(a) if a.isdigit() else a,
                 eval(b) if b.isdigit() else b,
                 np.array(s),
+                np.array(cm),
+                np.array(wm),
             )
-            for a, b, s in state["history"]
+            for a, b, s, cm, wm in state["history"]
         ]
         self.iteration_count = state.get("iteration_count", 0)
         # Convert lists back to tuples for completed_comparisons
@@ -473,3 +488,37 @@ class BradleyTerryRanker:
             )
         else:
             raise ValueError(f"Unknown format: {format}")
+
+    def model_diagnostics(self) -> Dict[str, float]:
+        """Compute model diagnostics similar to R's BradleyTerry2"""
+        if np.sum(self.comparison_matrix) == 0:
+            return {"log_likelihood": 0.0, "aic": 0.0, "deviance": 0.0}
+            
+        # Log-likelihood
+        ll = -self.log_likelihood(self.strengths)
+        
+        # AIC (Akaike Information Criterion)
+        k = self.n_items - 1  # Number of free parameters (one constraint)
+        aic = 2 * k - 2 * ll
+        
+        # Deviance (saturated model comparison)
+        saturated_ll = 0
+        for i in range(self.n_items):
+            for j in range(self.n_items):
+                if self.comparison_matrix[i, j] > 0:
+                    w_ij = self.win_matrix[i, j] / self.comparison_matrix[i, j]
+                    if w_ij > 0 and w_ij < 1:
+                        saturated_ll += self.comparison_matrix[i, j] * (
+                            w_ij * np.log(w_ij) + (1 - w_ij) * np.log(1 - w_ij)
+                        )
+        
+        deviance = 2 * (saturated_ll - ll)
+        
+        return {
+            "log_likelihood": ll,
+            "aic": aic,
+            "deviance": deviance,
+            "n_comparisons": int(np.sum(self.comparison_matrix) / 2),
+            "mean_strength": float(np.mean(self.strengths)),
+            "strength_variance": float(np.var(self.strengths))
+        }

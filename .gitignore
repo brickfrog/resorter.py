@@ -167,3 +167,4 @@ examples/
 *_example.py
 
 .vscode/
+.history
