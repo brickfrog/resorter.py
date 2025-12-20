@@ -78,19 +78,19 @@ def assign_custom_quantiles(
 ) -> Dict[Union[int, str], int]:
     sorted_values = [val for _, val in sorted_ranks.items()]
     num_items = len(sorted_values)
+    if num_items == 0:
+        return {}
 
     cutoff_positions = [int(c * num_items) for c in quantile_cutoffs]
-
     quantiles = {}
-    quantile_label = 0
+    quantile_label = 1
+    next_cutoff_idx = 1
 
     for i, (key, _) in enumerate(sorted_ranks.items()):
-        if (
-            quantile_label < len(cutoff_positions) - 1
-            and i >= cutoff_positions[quantile_label]
-        ):
+        while next_cutoff_idx < len(cutoff_positions) and i >= cutoff_positions[next_cutoff_idx]:
             quantile_label += 1
-        quantiles[key] = quantile_label + 1
+            next_cutoff_idx += 1
+        quantiles[key] = quantile_label
 
     return quantiles
 
@@ -99,20 +99,24 @@ def assign_levels(
     sorted_ranks: Mapping[Any, float], num_levels: int
 ) -> Dict[Union[int, str], int]:
     total_items = len(sorted_ranks)
+    if total_items == 0:
+        return {}
     items_per_level = total_items // num_levels
     remainder = total_items % num_levels
+    level_sizes = [
+        items_per_level + (1 if idx < remainder else 0) for idx in range(num_levels)
+    ]
     levels = {}
     current_level = num_levels
     count = 0
+    size_idx = 0
     for key, _ in sorted_ranks.items():
         levels[key] = current_level
         count += 1
-        if count >= items_per_level:
-            if remainder > 0:
-                remainder -= 1
-            else:
-                current_level -= 1
-                count = 0
+        if count >= level_sizes[size_idx]:
+            size_idx += 1
+            current_level -= 1
+            count = 0
     return levels
 
 
@@ -143,8 +147,18 @@ class BradleyTerryRanker:
         self.comparison_matrix = np.zeros((self.n_items, self.n_items))
         self.win_matrix = np.zeros((self.n_items, self.n_items))
         self.iteration_count: int = 0
-        self.completed_comparisons: set = set()
-        self.history: List[Tuple[str, str, np.ndarray, np.ndarray, np.ndarray]] = []
+        self.completed_comparisons: set[tuple[str, str]] = set()
+        self.history: List[
+            Tuple[
+                Any,
+                Any,
+                np.ndarray,
+                np.ndarray,
+                np.ndarray,
+                int,
+                set[tuple[str, str]],
+            ]
+        ] = []
 
     def bradley_terry_prob(self, strength_i: float, strength_j: float) -> float:
         """Compute probability that item i beats item j"""
@@ -188,8 +202,18 @@ class BradleyTerryRanker:
         self, item_a: Union[int, str], item_b: Union[int, str], response: int
     ) -> None:
         """Update model with a single comparison result"""
-        # Save state before update
-        self.history.append((str(item_a), str(item_b), self.strengths.copy(), self.comparison_matrix.copy(), self.win_matrix.copy()))
+        # Save state before update (include counts so undo is consistent)
+        self.history.append(
+            (
+                item_a,
+                item_b,
+                self.strengths.copy(),
+                self.comparison_matrix.copy(),
+                self.win_matrix.copy(),
+                self.iteration_count,
+                self.completed_comparisons.copy(),
+            )
+        )
 
         i, j = self.item_to_idx[item_a], self.item_to_idx[item_b]
         
@@ -227,13 +251,22 @@ class BradleyTerryRanker:
             print("Nothing to undo!")
             return
 
-        item_a, item_b, previous_strengths, previous_comparison_matrix, previous_win_matrix = self.history.pop()
-        _i, _j = self.item_to_idx[item_a], self.item_to_idx[item_b]
+        (
+            item_a,
+            item_b,
+            previous_strengths,
+            previous_comparison_matrix,
+            previous_win_matrix,
+            previous_iteration_count,
+            previous_completed_comparisons,
+        ) = self.history.pop()
         
         # Restore previous state
         self.strengths = previous_strengths
         self.comparison_matrix = previous_comparison_matrix
         self.win_matrix = previous_win_matrix
+        self.iteration_count = previous_iteration_count
+        self.completed_comparisons = previous_completed_comparisons
         
         print(f"Undid comparison between '{item_a}' and '{item_b}'")
 
@@ -242,6 +275,14 @@ class BradleyTerryRanker:
     ) -> tuple:
         """Create a consistent key for a comparison regardless of order"""
         return tuple(sorted([str(item_a), str(item_b)]))
+
+    def _completed_from_matrix(self, comparison_matrix: np.ndarray) -> set[tuple[str, str]]:
+        completed: set[tuple[str, str]] = set()
+        for i in range(self.n_items):
+            for j in range(i + 1, self.n_items):
+                if comparison_matrix[i, j] > 0:
+                    completed.add(self.get_comparison_key(self.idx_to_item[i], self.idx_to_item[j]))
+        return completed
 
     def compute_ranks(self) -> Dict[Union[int, str], float]:
         """Convert log-strengths to probabilities"""
@@ -478,7 +519,18 @@ class BradleyTerryRanker:
             "strengths": self.strengths.tolist(),
             "comparison_matrix": self.comparison_matrix.tolist(),
             "win_matrix": self.win_matrix.tolist(),
-            "history": [(str(a), str(b), s.tolist(), cm.tolist(), wm.tolist()) for a, b, s, cm, wm in self.history],
+            "history": [
+                {
+                    "item_a": a,
+                    "item_b": b,
+                    "strengths": s.tolist(),
+                    "comparison_matrix": cm.tolist(),
+                    "win_matrix": wm.tolist(),
+                    "iteration_count": it,
+                    "completed_comparisons": [list(comp) for comp in completed],
+                }
+                for a, b, s, cm, wm, it, completed in self.history
+            ],
             "iteration_count": self.iteration_count,
             "completed_comparisons": [list(comp) for comp in self.completed_comparisons],
         }
@@ -496,16 +548,46 @@ class BradleyTerryRanker:
         self.strengths = np.array(state["strengths"])
         self.comparison_matrix = np.array(state["comparison_matrix"])
         self.win_matrix = np.array(state["win_matrix"])
-        self.history = [
-            (
-                eval(a) if a.isdigit() else a,
-                eval(b) if b.isdigit() else b,
-                np.array(s),
-                np.array(cm),
-                np.array(wm),
-            )
-            for a, b, s, cm, wm in state["history"]
-        ]
+        self.history = []
+        for idx, entry in enumerate(state.get("history", [])):
+            if isinstance(entry, dict):
+                item_a = entry.get("item_a")
+                item_b = entry.get("item_b")
+                strengths = np.array(entry.get("strengths", []))
+                comparison_matrix = np.array(entry.get("comparison_matrix", []))
+                win_matrix = np.array(entry.get("win_matrix", []))
+                iteration_count = entry.get("iteration_count", idx)
+                completed_raw = entry.get("completed_comparisons")
+                if completed_raw is None:
+                    completed = self._completed_from_matrix(comparison_matrix)
+                else:
+                    completed = {tuple(comp) for comp in completed_raw}
+                self.history.append(
+                    (
+                        item_a,
+                        item_b,
+                        strengths,
+                        comparison_matrix,
+                        win_matrix,
+                        iteration_count,
+                        completed,
+                    )
+                )
+            else:
+                item_a, item_b, strengths, comparison_matrix, win_matrix = entry
+                comparison_matrix = np.array(comparison_matrix)
+                completed = self._completed_from_matrix(comparison_matrix)
+                self.history.append(
+                    (
+                        item_a,
+                        item_b,
+                        np.array(strengths),
+                        comparison_matrix,
+                        np.array(win_matrix),
+                        idx,
+                        completed,
+                    )
+                )
         self.iteration_count = state.get("iteration_count", 0)
         # Convert lists back to tuples for completed_comparisons
         self.completed_comparisons = set(tuple(comp) for comp in state.get("completed_comparisons", []))

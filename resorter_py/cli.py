@@ -177,10 +177,9 @@ def main(
     )
 
     while i < num_queries:
-        if hasattr(model, "min_confidence"):
-            if not model.should_continue(config.min_confidence):
-                print("\nReached confidence threshold - stopping early!")
-                break
+        if not model.should_continue(config.min_confidence):
+            print("\nReached confidence threshold - stopping early!")
+            break
 
         # Get next comparison
         item_a, item_b = model.get_most_informative_pair()

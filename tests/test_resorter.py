@@ -166,6 +166,8 @@ def test_undo_comparison(sample_model):
     initial_strengths = sample_model.strengths.copy()
     initial_comparisons = sample_model.comparison_matrix.copy()
     initial_wins = sample_model.win_matrix.copy()
+    initial_iteration_count = sample_model.iteration_count
+    initial_completed = sample_model.completed_comparisons.copy()
 
     # Make a comparison
     sample_model.update_single_query("A", "B", 1)
@@ -180,6 +182,8 @@ def test_undo_comparison(sample_model):
     assert np.array_equal(sample_model.strengths, initial_strengths)
     assert np.array_equal(sample_model.comparison_matrix, initial_comparisons)
     assert np.array_equal(sample_model.win_matrix, initial_wins)
+    assert sample_model.iteration_count == initial_iteration_count
+    assert sample_model.completed_comparisons == initial_completed
 
 
 def test_assign_levels():
@@ -193,7 +197,11 @@ def test_assign_custom_quantiles():
     sorted_ranks = {"A": 0.9, "B": 0.7, "C": 0.5, "D": 0.3}
     quantiles = assign_custom_quantiles(sorted_ranks, [0, 0.5, 1])
     assert len(quantiles) == 4
-    assert all(quantile in [1, 2, 3] for quantile in quantiles.values())
+    assert all(quantile in [1, 2] for quantile in quantiles.values())
+    assert quantiles["A"] == 1
+    assert quantiles["B"] == 1
+    assert quantiles["C"] == 2
+    assert quantiles["D"] == 2
 
 
 def test_config():

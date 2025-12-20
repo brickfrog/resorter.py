@@ -74,6 +74,13 @@ Clyde,0.1444622888556121,0.4057839646372169,0.5
 Inky,0.14036864298054136,0.31250070892832205,0.5
 ```
 
+## Assumptions
+
+- Items are treated as labels (typically strings) and pair tracking uses their string form.
+- Quantile cutoffs are expected to include `0` and `1` and define `len(cutoffs) - 1` bins.
+- Level assignment spreads items as evenly as possible, with any remainder going to the highest levels.
+- Early stopping honors `--min-confidence` after at least a few comparisons per item.
+
 ## Acknowledgments
 
 Thanks to Gwern for the [original concept](https://gwern.net/resorter) and inspiration. I primarily wrote it to integrate with other python code, I'd recommending looking at hiAndrewQuinn's [repackaging](https://github.com/hiAndrewQuinn/resorter) if you're looking for the original resorter in an easier-to-install package. 
