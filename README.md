@@ -89,6 +89,6 @@ Inky,0.14036864298054136,0.31250070892832205,0.5
 
 ## Acknowledgments
 
-Thanks to Gwern for the [original concept](https://gwern.net/resorter) and inspiration. I primarily wrote it to integrate with other python code, I'd recommending looking at hiAndrewQuinn's [repackaging](https://github.com/hiAndrewQuinn/resorter) if you're looking for the original resorter in an easier-to-install package. 
+Thanks to Gwern for the [original concept](https://gwern.net/resorter) and inspiration. I primarily wrote it to integrate with other python code, I'd recommending looking at hiAndrewQuinn's [repackaging](https://github.com/hiAndrewQuinn/resorter) if you're looking for the original resorter in an easier-to-install package.
 
-Python doesn't have the same kind of statistics packages available, so I had to handroll the comparison functionality. I'm not 100% sure I have it correct, but it passes the smell test insofar as rankings.
+Python doesn't have the same kind of statistics packages available, so I had to handroll (read: use scipy) the comparison functionality. I'm not 100% sure I have it correct, but it passes the smell test insofar as rankings.
