@@ -1,48 +1,90 @@
 from math import ceil
-from typing import Dict, List, Optional, Tuple, Union, Sequence, Any, Mapping
+from typing import Dict, List, Optional, Tuple, Union, Sequence, Any, Mapping, TYPE_CHECKING
+import csv
 import os
 import json
 
 import numpy as np
-import pandas as pd
 from scipy.optimize import minimize
 
+try:
+    import pandas as pd
+except ModuleNotFoundError:  # Optional dependency for DataFrame I/O.
+    pd = None
 
-def read_input(data_input: str) -> pd.DataFrame:
+if TYPE_CHECKING:
+    import pandas as pd
+
+
+def read_input(
+    data_input: str, as_dataframe: Optional[bool] = None
+) -> Union[List[Dict[str, str]], "pd.DataFrame"]:
     """
-    Reads .csv into a dataframe, or splits a comma-separated string into a dataframe.
-    Returns DataFrame with 'Item' and optionally 'Score' columns.
+    Reads .csv into a list of dicts, or splits a comma-separated string into rows.
+    Returns list of dicts with 'Item' and optionally 'Score' keys, or a DataFrame
+    when as_dataframe is True and pandas is installed.
     """
+    if as_dataframe is None:
+        as_dataframe = pd is not None
+    if as_dataframe and pd is None:
+        raise ImportError("pandas is required for as_dataframe=True")
+
     if os.path.exists(data_input) and data_input.endswith(".csv"):
-        try:
-            # First try reading with headers
-            df = pd.read_csv(data_input, dtype=str, na_filter=False)
-            if "Item" not in df.columns:
-                # If headers don't match, read without headers and set them
-                df = pd.read_csv(data_input, header=None, dtype=str, na_filter=False)
-                if df.shape[1] == 2:
-                    df.columns = ["Item", "Score"]
-                else:
-                    df.columns = ["Item"]
-        except pd.errors.EmptyDataError:
-            return pd.DataFrame(columns=["Item"])
-        return df
+        with open(data_input, newline="") as handle:
+            rows = list(csv.reader(handle))
+        if not rows:
+            return pd.DataFrame(columns=["Item"]) if as_dataframe else []
+
+        header = rows[0]
+        if "Item" in header:
+            item_idx = header.index("Item")
+            score_idx = header.index("Score") if "Score" in header else None
+            data_rows = rows[1:]
+        else:
+            item_idx = 0
+            score_idx = 1 if max(len(row) for row in rows) > 1 else None
+            data_rows = rows
+
+        output: List[Dict[str, str]] = []
+        for row in data_rows:
+            item = row[item_idx] if item_idx < len(row) else ""
+            entry = {"Item": item}
+            if score_idx is not None and score_idx < len(row):
+                entry["Score"] = row[score_idx]
+            output.append(entry)
+        return pd.DataFrame(output) if as_dataframe else output
 
     # Handle comma-separated string input
     items = [item.strip() for item in data_input.split(",")]
-    return pd.DataFrame({"Item": items})
+    output = [{"Item": item} for item in items]
+    return pd.DataFrame(output) if as_dataframe else output
 
 
 def parse_input(
-    df: pd.DataFrame,
+    rows: Sequence[Mapping[str, Any]],
 ) -> Tuple[List[str], Optional[Dict[str, float]]]:
     """
-    Parse the input dataframe to separate items and scores.
-    Expects DataFrame with 'Item' and optionally 'Score' columns.
+    Parse the input rows to separate items and scores.
+    Expects mappings with 'Item' and optionally 'Score' keys.
     """
-    items = df["Item"].tolist()
-    if "Score" in df.columns:
-        scores = df.set_index("Item")["Score"].astype(float).to_dict()
+    if hasattr(rows, "columns"):
+        columns = list(rows.columns)
+        if "Item" not in columns:
+            return [], None
+        items = list(rows["Item"])
+        if "Score" in columns:
+            scores = {item: float(score) for item, score in zip(items, rows["Score"])}
+        else:
+            scores = None
+        return items, scores
+
+    items = [str(row.get("Item", "")) for row in rows]
+    if any("Score" in row for row in rows):
+        scores = {
+            str(row.get("Item", "")): float(row["Score"])
+            for row in rows
+            if "Score" in row and row.get("Item")
+        }
     else:
         scores = None
     return items, scores
@@ -605,8 +647,10 @@ class BradleyTerryRanker:
                 f"{str(item):<{max_name_len}} | {'#' * bar_length}{' ' * (40-bar_length)} | {rank:.2f}"
             )
 
-    def export_rankings(self, format: str = "csv") -> Union[str, Dict, pd.DataFrame]:
-        """Export rankings in various formats"""
+    def export_rankings(
+        self, format: str = "csv", as_dataframe: Optional[bool] = None
+    ) -> Union[str, Dict, List[Dict[str, float]], "pd.DataFrame"]:
+        """Export rankings in various formats; CSV can be a DataFrame or list."""
         ranks = self.compute_ranks()
         confidences = self.get_ranking_confidence()
         sorted_items = sorted(ranks.items(), key=lambda x: x[1], reverse=True)
@@ -626,13 +670,15 @@ class BradleyTerryRanker:
                 lines.append(f"| {item} | {rank:.2f} | {confidences[item]:.2%} |")
             return "\n".join(lines)
         elif format == "csv":
-            return pd.DataFrame(
-                {
-                    "Item": [item for item, _ in sorted_items],
-                    "Rank": [rank for _, rank in sorted_items],
-                    "Confidence": [confidences[item] for item, _ in sorted_items],
-                }
-            )
+            if as_dataframe is None:
+                as_dataframe = pd is not None
+            if as_dataframe and pd is None:
+                raise ImportError("pandas is required for as_dataframe=True")
+            rows = [
+                {"Item": item, "Rank": rank, "Confidence": confidences[item]}
+                for item, rank in sorted_items
+            ]
+            return pd.DataFrame(rows) if as_dataframe else rows
         else:
             raise ValueError(f"Unknown format: {format}")
 

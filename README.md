@@ -12,6 +12,12 @@ cd resorter.py
 uv tool install .
 ```
 
+Optional: if you want `read_input(..., as_dataframe=True)` or `export_rankings(..., as_dataframe=True)`, install the pandas extra:
+
+```bash
+uv tool install ".[pandas]"
+```
+
 See the help for more (up-to-date) information about usage.
 
 ```bash

@@ -1,8 +1,8 @@
 import click
+import csv
 import sys
 import json
-import pandas as pd
-from typing import Optional
+from typing import Optional, List, Dict, Any
 
 from .ranker import (
     BradleyTerryRanker,
@@ -150,12 +150,12 @@ def main(
     )
 
     try:
-        df: pd.DataFrame = read_input(input_file)
+        rows = read_input(input_file, as_dataframe=False)
     except FileNotFoundError:
         print("Input file not found.")
         return
 
-    items, scores = parse_input(df)
+    items, scores = parse_input(rows)
     num_queries: int = determine_queries(items, config.queries)
     print(f"Number of queries: {num_queries}")
 
@@ -262,81 +262,102 @@ def main(
         k: v for k, v in sorted(ranks.items(), key=lambda x: x[1], reverse=True)
     }
 
-    # Create base DataFrame with rankings
-    output_data = pd.DataFrame({
-        "Item": list(sorted_ranks.keys()),
-        "Rank": list(sorted_ranks.values()),
-        "Confidence": [confidences[item] for item in sorted_ranks.keys()]
-    })
+    items = list(sorted_ranks.keys())
+    uncertainties = {item: model.get_uncertainty(item) for item in items}
+    ci = model.get_confidence_intervals() if config.confidence_intervals else None
+    level_assignments = assign_levels(sorted_ranks, config.levels) if config.levels else None
+    quantile_assignments = (
+        assign_custom_quantiles(sorted_ranks, [float(x) for x in config.quantiles.split(" ")])
+        if config.quantiles
+        else None
+    )
 
-    # Add uncertainty information
-    uncertainties = {item: model.get_uncertainty(item) for item in sorted_ranks.keys()}
-    output_data["Uncertainty"] = [uncertainties[item] for item in output_data["Item"]]
+    rows: List[Dict[str, Any]] = []
+    for item in items:
+        row = {
+            "Item": item,
+            "Rank": sorted_ranks[item],
+            "Confidence": confidences[item],
+            "Uncertainty": uncertainties[item],
+        }
+        if config.confidence_intervals and ci:
+            row["CI_Lower"] = ci[item][0]
+            row["CI_Upper"] = ci[item][1]
+            row["Strength"] = model.strengths[model.item_to_idx[item]]
+        if level_assignments:
+            row["Level"] = level_assignments[item]
+        elif quantile_assignments:
+            row["Quantile"] = quantile_assignments[item]
+        rows.append(row)
 
-    # Add confidence intervals if requested
+    headers = ["Item", "Rank", "Confidence", "Uncertainty"]
     if config.confidence_intervals:
-        ci = model.get_confidence_intervals()
-        output_data["CI_Lower"] = [ci[item][0] for item in output_data["Item"]]
-        output_data["CI_Upper"] = [ci[item][1] for item in output_data["Item"]]
-        output_data["Strength"] = [model.strengths[model.item_to_idx[item]] for item in output_data["Item"]]
-
-    # Add level/quantile information if requested
-    if config.levels:
-        level_assignments = assign_levels(sorted_ranks, config.levels)
-        output_data["Level"] = [level_assignments[item] for item in output_data["Item"]]
-    elif config.quantiles:
-        quantile_cutoffs = [float(x) for x in config.quantiles.split(" ")]
-        quantile_assignments = assign_custom_quantiles(sorted_ranks, quantile_cutoffs)
-        output_data["Quantile"] = [quantile_assignments[item] for item in output_data["Item"]]
+        headers.extend(["Strength", "CI_Lower", "CI_Upper"])
+    if level_assignments:
+        headers.append("Level")
+    elif quantile_assignments:
+        headers.append("Quantile")
 
     # Format output based on requested format
     if format == "json":
         result = {
-            "rankings": dict(zip(output_data["Item"], output_data["Rank"])),
-            "confidences": dict(zip(output_data["Item"], output_data["Confidence"])),
-            "uncertainties": dict(zip(output_data["Item"], output_data["Uncertainty"])),
+            "rankings": {row["Item"]: row["Rank"] for row in rows},
+            "confidences": {row["Item"]: row["Confidence"] for row in rows},
+            "uncertainties": {row["Item"]: row["Uncertainty"] for row in rows},
             "metadata": {
                 "total_comparisons": model.iteration_count,
                 "mean_uncertainty": model.get_mean_uncertainty(),
-            }
+            },
         }
-        
+
         if config.confidence_intervals:
             result["confidence_intervals"] = {
-                item: {"lower": row["CI_Lower"], "upper": row["CI_Upper"], "strength": row["Strength"]}
-                for item, (_, row) in zip(output_data["Item"], output_data.iterrows())
+                row["Item"]: {
+                    "lower": row["CI_Lower"],
+                    "upper": row["CI_Upper"],
+                    "strength": row["Strength"],
+                }
+                for row in rows
             }
-            
+
         if config.diagnostics:
             result["model_diagnostics"] = model.model_diagnostics()
-            
-        if config.levels:
-            result["levels"] = dict(zip(output_data["Item"], output_data["Level"]))
-        elif config.quantiles:
-            result["quantiles"] = dict(zip(output_data["Item"], output_data["Quantile"]))
-            
+
+        if level_assignments:
+            result["levels"] = {row["Item"]: row["Level"] for row in rows}
+        elif quantile_assignments:
+            result["quantiles"] = {row["Item"]: row["Quantile"] for row in rows}
+
     elif format == "markdown":
-        headers = ["Item", "Rank", "Confidence", "Uncertainty"]
-        if config.confidence_intervals:
-            headers.extend(["Strength", "CI_Lower", "CI_Upper"])
-        if "Level" in output_data.columns:
-            headers.append("Level")
-        elif "Quantile" in output_data.columns:
-            headers.append("Quantile")
-        
         lines = [" | ".join(headers), "|".join(["-" * len(h) for h in headers])]
-        for _, row in output_data.iterrows():
-            values = [str(row["Item"]), f"{row['Rank']:.2f}", f"{row['Confidence']:.2%}", f"{row['Uncertainty']:.3f}"]
+        for row in rows:
+            values = [
+                str(row["Item"]),
+                f"{row['Rank']:.2f}",
+                f"{row['Confidence']:.2%}",
+                f"{row['Uncertainty']:.3f}",
+            ]
             if config.confidence_intervals:
-                values.extend([f"{row['Strength']:.3f}", f"{row['CI_Lower']:.3f}", f"{row['CI_Upper']:.3f}"])
-            if "Level" in output_data.columns:
+                values.extend(
+                    [
+                        f"{row['Strength']:.3f}",
+                        f"{row['CI_Lower']:.3f}",
+                        f"{row['CI_Upper']:.3f}",
+                    ]
+                )
+            if level_assignments:
                 values.append(str(row["Level"]))
-            elif "Quantile" in output_data.columns:
+            elif quantile_assignments:
                 values.append(str(row["Quantile"]))
             lines.append(" | ".join(values))
         result = "\n".join(lines)
     else:  # csv
-        result = output_data
+        result = rows
+
+    def write_csv(target) -> None:
+        writer = csv.DictWriter(target, fieldnames=headers)
+        writer.writeheader()
+        writer.writerows(rows)
 
     # Export in the requested format
     if not config.output:
@@ -345,7 +366,7 @@ def main(
         elif format == "markdown":
             print(result)
         else:
-            output_data.to_csv(sys.stdout, index=False)
+            write_csv(sys.stdout)
     else:
         if format == "json":
             with open(output, "w") as f:
@@ -354,7 +375,8 @@ def main(
             with open(output, "w") as f:
                 f.write(str(result))
         else:
-            output_data.to_csv(output, index=False)
+            with open(output, "w", newline="") as f:
+                write_csv(f)
 
     # Add visualization if requested
     if config.visualize:

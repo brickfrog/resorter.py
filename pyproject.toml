@@ -15,8 +15,12 @@ urls = {Homepage = "https://github.com/brickfrog/resorter.py"}
 dependencies = [
     "click>=8.3.1",
     "numpy>=2.4.0",
-    "pandas>=2.3.3",
     "scipy>=1.16.3",
+]
+
+[project.optional-dependencies]
+pandas = [
+    "pandas>=2.3.3",
 ]
 
 [project.scripts]

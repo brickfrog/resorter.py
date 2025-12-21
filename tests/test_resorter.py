@@ -1,5 +1,5 @@
+import csv
 import pytest
-import pandas as pd
 import numpy as np
 from resorter_py.ranker import (
     BradleyTerryRanker,
@@ -41,46 +41,49 @@ def bt_model_with_scores():
 
 def test_read_input_csv(tmp_path):
     # Test reading from CSV file
-    df = pd.DataFrame({"Item": ["A", "B", "C"]})
     csv_path = tmp_path / "test.csv"
-    df.to_csv(csv_path, index=False)  # Keep the header
-    result = read_input(str(csv_path))
+    with open(csv_path, "w", newline="") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(["Item"])
+        writer.writerows([["A"], ["B"], ["C"]])
+    result = read_input(str(csv_path), as_dataframe=False)
     assert len(result) == 3
-    assert result.iloc[0, 0] == "A"
-    assert list(result.columns) == ["Item"]
+    assert result[0]["Item"] == "A"
+    assert list(result[0].keys()) == ["Item"]
 
     # Test reading CSV without headers
-    df.to_csv(csv_path, index=False, header=False)
-    result = read_input(str(csv_path))
+    with open(csv_path, "w", newline="") as handle:
+        writer = csv.writer(handle)
+        writer.writerows([["A"], ["B"], ["C"]])
+    result = read_input(str(csv_path), as_dataframe=False)
     assert len(result) == 3
-    assert result.iloc[0, 0] == "A"
-    assert list(result.columns) == ["Item"]
+    assert result[0]["Item"] == "A"
+    assert list(result[0].keys()) == ["Item"]
 
 
 def test_read_input_string():
     # Test reading from comma-separated string
-    result = read_input("A,B,C")
+    result = read_input("A,B,C", as_dataframe=False)
     assert len(result) == 3
-    assert result.iloc[0, 0] == "A"
-    assert list(result.columns) == ["Item"]
+    assert result[0]["Item"] == "A"
+    assert list(result[0].keys()) == ["Item"]
 
 
 def test_parse_input():
     # Test parsing with scores
-    df = pd.DataFrame({"Item": ["A", "B"], "Score": [1, 2]})
-    items, scores = parse_input(df)
+    rows = [{"Item": "A", "Score": "1"}, {"Item": "B", "Score": "2"}]
+    items, scores = parse_input(rows)
     assert items == ["A", "B"]
     assert scores == {"A": 1.0, "B": 2.0}
 
     # Test parsing without scores
-    df = pd.DataFrame({"Item": ["A", "B"]})
-    items, scores = parse_input(df)
+    rows = [{"Item": "A"}, {"Item": "B"}]
+    items, scores = parse_input(rows)
     assert items == ["A", "B"]
     assert scores is None
 
     # Test with empty dataframe
-    df = pd.DataFrame(columns=["Item"])
-    items, scores = parse_input(df)
+    items, scores = parse_input([])
     assert items == []
     assert scores is None
 
@@ -132,11 +135,11 @@ def test_should_continue(sample_model):
 
 def test_export_rankings(sample_model):
     # Test CSV export
-    csv_output = sample_model.export_rankings("csv")
-    assert isinstance(csv_output, pd.DataFrame)
-    assert "Item" in csv_output.columns
-    assert "Rank" in csv_output.columns
-    assert "Confidence" in csv_output.columns
+    csv_output = sample_model.export_rankings("csv", as_dataframe=False)
+    assert isinstance(csv_output, list)
+    assert "Item" in csv_output[0]
+    assert "Rank" in csv_output[0]
+    assert "Confidence" in csv_output[0]
 
     # Test JSON export
     json_output = sample_model.export_rankings("json")
