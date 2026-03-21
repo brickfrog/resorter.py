@@ -386,8 +386,8 @@ def _make_valid_state():
     return {
         "items": ["A", "B", "C"],
         "strengths": [0.1, -0.05, -0.05],
-        "comparison_matrix": [[0, 1, 0], [1, 0, 0], [0, 0, 0]],
-        "win_matrix": [[0, 1, 0], [0, 0, 0], [0, 0, 0]],
+        "comparison_matrix": [[0.0, 1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 0.0]],
+        "win_matrix": [[0.0, 1.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]],
         "iteration_count": 1,
         "completed_comparisons": [["A", "B"]],
     }
@@ -437,12 +437,20 @@ class TestStateValidation:
         with pytest.raises(StateValidationError, match="non-empty list"):
             model.load_state(path)
 
-    def test_items_list_of_ints(self, tmp_path):
+    def test_items_list_of_ints_allowed(self, tmp_path):
         state = _make_valid_state()
         state["items"] = [1, 2, 3]
         path = _write_state(tmp_path, state)
         model = BradleyTerryRanker(["x"])
-        with pytest.raises(StateValidationError, match="only strings"):
+        model.load_state(path)
+        assert model.items == [1, 2, 3]
+
+    def test_items_list_of_floats_rejected(self, tmp_path):
+        state = _make_valid_state()
+        state["items"] = [1.5, 2.5, 3.5]
+        path = _write_state(tmp_path, state)
+        model = BradleyTerryRanker(["x"])
+        with pytest.raises(StateValidationError, match="strings or integers"):
             model.load_state(path)
 
     def test_strengths_length_mismatch(self, tmp_path):
@@ -563,6 +571,42 @@ class TestStateValidation:
         path = _write_state(tmp_path, state)
         model = BradleyTerryRanker(["A"])
         with pytest.raises(StateValidationError, match="Missing required keys"):
+            model.load_state(path)
+
+    def test_top_level_array_raises_error(self, tmp_path):
+        path = _write_state(tmp_path, ["A", "B", "C"])
+        model = BradleyTerryRanker(["A"])
+        with pytest.raises(StateValidationError, match="JSON object"):
+            model.load_state(path)
+
+    def test_top_level_primitive_raises_error(self, tmp_path):
+        path = _write_state(tmp_path, 42)
+        model = BradleyTerryRanker(["A"])
+        with pytest.raises(StateValidationError, match="JSON object"):
+            model.load_state(path)
+
+    def test_asymmetric_comparison_matrix(self, tmp_path):
+        state = _make_valid_state()
+        state["comparison_matrix"] = [[0.0, 1.0, 0.0], [2.0, 0.0, 0.0], [0.0, 0.0, 0.0]]
+        path = _write_state(tmp_path, state)
+        model = BradleyTerryRanker(["A", "B", "C"])
+        with pytest.raises(StateValidationError, match="symmetric"):
+            model.load_state(path)
+
+    def test_nonzero_diagonal_comparison_matrix(self, tmp_path):
+        state = _make_valid_state()
+        state["comparison_matrix"] = [[1.0, 1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 0.0]]
+        path = _write_state(tmp_path, state)
+        model = BradleyTerryRanker(["A", "B", "C"])
+        with pytest.raises(StateValidationError, match="self-comparisons"):
+            model.load_state(path)
+
+    def test_nonzero_diagonal_win_matrix(self, tmp_path):
+        state = _make_valid_state()
+        state["win_matrix"] = [[1.0, 1.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]
+        path = _write_state(tmp_path, state)
+        model = BradleyTerryRanker(["A", "B", "C"])
+        with pytest.raises(StateValidationError, match="self-comparisons"):
             model.load_state(path)
 
     def test_state_validation_error_is_value_error(self):
