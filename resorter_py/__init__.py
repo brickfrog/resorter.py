@@ -1,5 +1,6 @@
 from .ranker import (
     BradleyTerryRanker,
+    StateValidationError,
     read_input,
     parse_input,
     determine_queries,
@@ -10,6 +11,7 @@ from .ranker import (
 __version__ = "0.1.0"
 __all__ = [
     "BradleyTerryRanker",
+    "StateValidationError",
     "read_input",
     "parse_input",
     "determine_queries",

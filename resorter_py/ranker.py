@@ -16,6 +16,118 @@ if TYPE_CHECKING:
     import pandas as pd
 
 
+class StateValidationError(ValueError):
+    """Raised when a state file contains invalid or corrupted data."""
+
+
+_REQUIRED_STATE_KEYS = {
+    "items",
+    "strengths",
+    "comparison_matrix",
+    "win_matrix",
+    "iteration_count",
+    "completed_comparisons",
+}
+
+
+def _validate_state(state: dict) -> None:
+    """Validate a loaded state dict before assigning to the model.
+
+    Raises StateValidationError on any structural or semantic problem.
+    """
+    if not isinstance(state, dict):
+        raise StateValidationError("State must be a JSON object")
+
+    # --- required keys ---
+    missing = _REQUIRED_STATE_KEYS - state.keys()
+    if missing:
+        raise StateValidationError(f"Missing required keys: {sorted(missing)}")
+
+    # --- items ---
+    items = state["items"]
+    if not isinstance(items, list) or len(items) == 0:
+        raise StateValidationError("'items' must be a non-empty list")
+    if not all(isinstance(i, str) for i in items):
+        raise StateValidationError("'items' must contain only strings")
+    n = len(items)
+
+    # --- strengths ---
+    strengths = state["strengths"]
+    if not isinstance(strengths, list) or len(strengths) != n:
+        raise StateValidationError(
+            f"'strengths' must be a list of length {n}, got length {len(strengths) if isinstance(strengths, list) else type(strengths).__name__}"
+        )
+    if not all(isinstance(v, (int, float)) for v in strengths):
+        raise StateValidationError("'strengths' must contain only numbers")
+
+    # --- matrix helpers ---
+    def _check_matrix(name: str, matrix: object) -> None:
+        if not isinstance(matrix, list) or len(matrix) != n:
+            raise StateValidationError(
+                f"'{name}' must be a {n}x{n} list of lists"
+            )
+        for row_idx, row in enumerate(matrix):
+            if not isinstance(row, list) or len(row) != n:
+                raise StateValidationError(
+                    f"'{name}' row {row_idx} must have length {n}"
+                )
+            for col_idx, val in enumerate(row):
+                if not isinstance(val, (int, float)):
+                    raise StateValidationError(
+                        f"'{name}[{row_idx}][{col_idx}]' must be a number"
+                    )
+                if val < 0:
+                    raise StateValidationError(
+                        f"'{name}[{row_idx}][{col_idx}]' must be >= 0, got {val}"
+                    )
+
+    _check_matrix("comparison_matrix", state["comparison_matrix"])
+    _check_matrix("win_matrix", state["win_matrix"])
+
+    # --- win_matrix <= comparison_matrix ---
+    cm = state["comparison_matrix"]
+    wm = state["win_matrix"]
+    for i in range(n):
+        for j in range(n):
+            if wm[i][j] > cm[i][j]:
+                raise StateValidationError(
+                    f"win_matrix[{i}][{j}] ({wm[i][j]}) exceeds comparison_matrix[{i}][{j}] ({cm[i][j]})"
+                )
+
+    # --- iteration_count ---
+    ic = state["iteration_count"]
+    if not isinstance(ic, int) or ic < 0:
+        raise StateValidationError(
+            "'iteration_count' must be a non-negative integer"
+        )
+
+    # --- completed_comparisons ---
+    cc = state["completed_comparisons"]
+    if not isinstance(cc, list):
+        raise StateValidationError("'completed_comparisons' must be a list")
+    for idx, comp in enumerate(cc):
+        if (
+            not isinstance(comp, (list, tuple))
+            or len(comp) != 2
+            or not all(isinstance(c, str) for c in comp)
+        ):
+            raise StateValidationError(
+                f"'completed_comparisons[{idx}]' must be a 2-element list of strings"
+            )
+
+    # --- history (optional) ---
+    history = state.get("history", [])
+    if not isinstance(history, list):
+        raise StateValidationError("'history' must be a list")
+    for idx, entry in enumerate(history):
+        if isinstance(entry, dict):
+            for key in ("item_a", "item_b"):
+                if key not in entry:
+                    raise StateValidationError(
+                        f"history[{idx}] missing required key '{key}'"
+                    )
+
+
 def read_input(
     data_input: str, as_dataframe: Optional[bool] = None
 ) -> Union[List[Dict[str, str]], "pd.DataFrame"]:
@@ -583,6 +695,7 @@ class BradleyTerryRanker:
         """Load state from file"""
         with open(filename, "r") as f:
             state = json.load(f)
+        _validate_state(state)
         self.items = state["items"]
         self.item_to_idx = {item: i for i, item in enumerate(self.items)}
         self.idx_to_item = {i: item for i, item in enumerate(self.items)}
