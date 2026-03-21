@@ -47,15 +47,16 @@ def _validate_state(state: dict) -> None:
     items = state["items"]
     if not isinstance(items, list) or len(items) == 0:
         raise StateValidationError("'items' must be a non-empty list")
-    if not all(isinstance(i, str) for i in items):
-        raise StateValidationError("'items' must contain only strings")
+    if not all(isinstance(i, (str, int)) for i in items):
+        raise StateValidationError("'items' must contain only strings or integers")
     n = len(items)
 
     # --- strengths ---
     strengths = state["strengths"]
     if not isinstance(strengths, list) or len(strengths) != n:
         raise StateValidationError(
-            f"'strengths' must be a list of length {n}, got length {len(strengths) if isinstance(strengths, list) else type(strengths).__name__}"
+            f"'strengths' must be a list of length {n}, got "
+            f"{'list of length ' + str(len(strengths)) if isinstance(strengths, list) else 'object of type ' + type(strengths).__name__}"
         )
     if not all(isinstance(v, (int, float)) for v in strengths):
         raise StateValidationError("'strengths' must contain only numbers")
