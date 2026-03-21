@@ -6,6 +6,7 @@ from typing import Optional, List, Dict, Any
 
 from .ranker import (
     BradleyTerryRanker,
+    StateValidationError,
     read_input,
     parse_input,
     determine_queries,
@@ -168,6 +169,8 @@ def main(
             print(f"State file {config.load_state} not found, starting fresh.")
         except json.JSONDecodeError:
             print(f"Invalid state file {config.load_state}, starting fresh.")
+        except StateValidationError as e:
+            print(f"Corrupted state file {config.load_state}: {e}. Starting fresh.")
 
     # Run the comparison process
     i = 0
