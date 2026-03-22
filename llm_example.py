@@ -10,9 +10,9 @@ def example_llm_response(item_a: str, item_b: str) -> int:
             if response in ["1", "2", "3"]:
                 return int(response)
             print("Invalid input. Please enter 1, 2, or 3.")
-        except ValueError:
-            print("Invalid input. Please enter 1, 2, or 3.")
-
+        except (EOFError, KeyboardInterrupt):
+            print("\nInput interrupted. Exiting.")
+            raise SystemExit(1)
 def main():
     # Initialize the ranker with some test items
     items = ["The Matrix", "Inception", "Interstellar", "The Dark Knight"]
