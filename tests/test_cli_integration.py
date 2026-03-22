@@ -3,6 +3,7 @@ import os
 import pytest
 from click.testing import CliRunner
 from resorter_py.cli import main
+from resorter_py import __version__
 
 def test_cli_interactive_ranking(tmp_path):
     """Scenario 1: One short interactive ranking run."""
@@ -101,3 +102,11 @@ def test_cli_edge_cases(tmp_path):
     assert result.exit_code == 0
     assert f"Invalid state file {invalid_state}, starting fresh." in result.output
     assert "Quitting..." in result.output
+
+
+def test_cli_version():
+    """Scenario 5: Check --version flag."""
+    runner = CliRunner()
+    result = runner.invoke(main, ["--version"])
+    assert result.exit_code == 0
+    assert __version__ in result.output

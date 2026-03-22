@@ -48,6 +48,7 @@ class Config:
 
 
 @click.command()
+@click.version_option(package_name="resorter-py")
 @click.option(
     "--input",
     "input_file",
