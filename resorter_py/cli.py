@@ -2,6 +2,7 @@ import click
 import csv
 import sys
 import json
+import numpy as np
 from typing import Optional, List, Dict, Any
 
 from .ranker import (
@@ -31,6 +32,7 @@ class Config:
         diagnostics,
         visualize,
         format="csv",
+        seed=None,
     ):
         self.input = input
         self.output = output
@@ -45,6 +47,7 @@ class Config:
         self.diagnostics = diagnostics
         self.visualize = visualize
         self.format = format
+        self.seed = seed
 
 
 @click.command()
@@ -120,6 +123,12 @@ class Config:
     default="csv",
     help="Output format for the rankings",
 )
+@click.option(
+    "--seed",
+    type=int,
+    default=None,
+    help="Random seed for reproducibility",
+)
 def main(
     input_file: str,
     output: str,
@@ -134,7 +143,10 @@ def main(
     diagnostics: bool,
     visualize: bool,
     format: str,
+    seed: Optional[int],
 ) -> None:
+    if seed is not None:
+        np.random.seed(seed)
     config: Config = Config(
         input_file,
         output,
@@ -149,6 +161,7 @@ def main(
         diagnostics,
         visualize,
         format,
+        seed,
     )
 
     try:
@@ -161,7 +174,7 @@ def main(
     num_queries: int = determine_queries(items, config.queries)
     print(f"Number of queries: {num_queries}")
 
-    model = BradleyTerryRanker(items, scores)
+    model = BradleyTerryRanker(items, scores, seed=config.seed)
     if config.load_state:
         try:
             model.load_state(config.load_state)

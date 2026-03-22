@@ -223,6 +223,7 @@ def test_config():
         diagnostics=True,
         visualize=True,
         format="csv",
+        seed=42,
     )
     assert config.input == "test.csv"
     assert config.output == "out.csv"
@@ -237,6 +238,20 @@ def test_config():
     assert config.diagnostics is True
     assert config.visualize is True
     assert config.format == "csv"
+    assert config.seed == 42
+
+
+def test_reproducibility():
+    items = ["A", "B", "C", "D"]
+    seed = 42
+    model1 = BradleyTerryRanker(items, seed=seed)
+    model2 = BradleyTerryRanker(items, seed=seed)
+    
+    assert np.array_equal(model1.strengths, model2.strengths)
+    
+    # Also verify that it's different with a different seed
+    model3 = BradleyTerryRanker(items, seed=43)
+    assert not np.array_equal(model1.strengths, model3.strengths)
 
 
 def test_save_load_state(sample_model, tmp_path):
