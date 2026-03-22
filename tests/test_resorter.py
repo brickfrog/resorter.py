@@ -626,3 +626,59 @@ class TestStateValidation:
 
     def test_state_validation_error_is_value_error(self):
         assert issubclass(StateValidationError, ValueError)
+
+
+def test_compute_ordinal_rankings(sample_model):
+    # Setup A > B > C > D
+    sample_model.update_single_query("A", "B", 1)
+    sample_model.update_single_query("B", "C", 1)
+    sample_model.update_single_query("C", "D", 1)
+
+    rankings = sample_model.compute_ordinal_rankings()
+    assert rankings["A"] == 1
+    assert rankings["B"] == 2
+    assert rankings["C"] == 3
+    assert rankings["D"] == 4
+
+
+def test_get_confidence_intervals(sample_model):
+    # Need some comparisons
+    sample_model.update_single_query("A", "B", 1)
+    sample_model.update_single_query("B", "C", 1)
+    sample_model.update_single_query("C", "D", 1)
+
+    ci = sample_model.get_confidence_intervals()
+    assert isinstance(ci, dict)
+    for item in sample_model.items:
+        lower, upper = ci[item]
+        assert lower < upper
+
+
+def test_visualize_rankings(sample_model, capsys):
+    sample_model.update_single_query("A", "B", 1)
+    sample_model.visualize_rankings()
+    captured = capsys.readouterr()
+    assert "Ranking visualization:" in captured.out
+    for item in sample_model.items:
+        assert str(item) in captured.out
+    assert "#" in captured.out
+
+
+def test_model_diagnostics(sample_model):
+    # 3 comparisons
+    sample_model.update_single_query("A", "B", 1)
+    sample_model.update_single_query("B", "C", 1)
+    sample_model.update_single_query("C", "D", 1)
+
+    diagnostics = sample_model.model_diagnostics()
+    required_keys = {
+        "log_likelihood",
+        "aic",
+        "deviance",
+        "n_comparisons",
+        "mean_strength",
+        "strength_variance",
+    }
+    assert all(key in diagnostics for key in required_keys)
+    assert diagnostics["n_comparisons"] == 3
+
