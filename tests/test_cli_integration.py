@@ -101,3 +101,24 @@ def test_cli_edge_cases(tmp_path):
     assert result.exit_code == 0
     assert f"Invalid state file {invalid_state}, starting fresh." in result.output
     assert "Quitting..." in result.output
+
+def test_cli_resume_comparison_counter(tmp_path):
+    """Verify that comparison numbering resumes correctly after loading state."""
+    input_file = tmp_path / "items.csv"
+    input_file.write_text("Apple\nBanana\nCherry")
+    state_file = tmp_path / "state.json"
+    
+    runner = CliRunner()
+    # First run: Do two comparisons then quit to save state.
+    # input: '1' (comparison 1), '1' (comparison 2), then 'q' (quit)
+    result = runner.invoke(main, ["--input", str(input_file), "--save-state", str(state_file)], input="1\n1\nq\n")
+    assert result.exit_code == 0
+    assert "Comparison 1/" in result.output
+    assert "Comparison 2/" in result.output
+    
+    # Second run: Load the state and check that it resumes from Comparison 3
+    result = runner.invoke(main, ["--input", str(input_file), "--load-state", str(state_file)], input="q\n")
+    assert result.exit_code == 0
+    assert f"Loaded state from {state_file}" in result.output
+    assert "Comparison 3/" in result.output
+    assert "Comparison 1/" not in result.output[result.output.find("Loaded state from"): ]
