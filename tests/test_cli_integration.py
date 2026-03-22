@@ -101,3 +101,11 @@ def test_cli_edge_cases(tmp_path):
     assert result.exit_code == 0
     assert f"Invalid state file {invalid_state}, starting fresh." in result.output
     assert "Quitting..." in result.output
+
+
+def test_cli_version():
+    """Scenario 5: Check --version flag."""
+    runner = CliRunner()
+    result = runner.invoke(main, ["--version"])
+    assert result.exit_code == 0
+    assert "0.1.0" in result.output
