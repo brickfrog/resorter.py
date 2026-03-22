@@ -45,17 +45,8 @@ def test_cli_save_load_state(tmp_path):
     assert result.exit_code == 0
     assert f"Loaded state from {state_file}" in result.output
     # Check that it didn't start from Comparison 1/3 if state was loaded correctly.
-    # Actually, it might still show Comparison 1/3 because it resets 'i' in the while loop?
-    # Let's check cli.py:
-    # i = 0
-    # while i < num_queries:
-    #   ...
-    #   if response in ["1", "2", "3"]:
-    #     model.update_single_query(...)
-    #     i += 1
-    # The 'i' is local to main(), but model.iteration_count is in the model.
-    # So it might restart numbering from 1 if we just re-run main.
-    # But it should have the data from the first run.
+    assert "Comparison 2/3" in result.output
+    assert "Comparison 1/3" not in result.output[result.output.find(f"Loaded state from {state_file}"):]
     assert "Apple" in result.output
 
 def test_cli_json_output(tmp_path):

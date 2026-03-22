@@ -173,7 +173,7 @@ def main(
             print(f"Corrupted state file {config.load_state}: {e}. Starting fresh.")
 
     # Run the comparison process
-    i = 0
+    i = model.iteration_count
     print(
         "Comparison commands: 1=yes, 2=tied, 3=second is better, p=print estimates, "
         "s=skip question, u=undo last comparison, q=quit"
