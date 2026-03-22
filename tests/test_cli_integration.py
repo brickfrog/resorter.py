@@ -3,6 +3,14 @@ import os
 import pytest
 from click.testing import CliRunner
 from resorter_py.cli import main
+from resorter_py import __version__
+
+def test_cli_version():
+    """Check that --version returns the correct version string."""
+    runner = CliRunner()
+    result = runner.invoke(main, ["--version"])
+    assert result.exit_code == 0
+    assert __version__ in result.output
 
 def test_cli_interactive_ranking(tmp_path):
     """Scenario 1: One short interactive ranking run."""
