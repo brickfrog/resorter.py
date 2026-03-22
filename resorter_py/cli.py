@@ -15,38 +15,25 @@ from .ranker import (
 )
 
 
+from dataclasses import dataclass
+
+
+@dataclass
 class Config:
-    def __init__(
-        self,
-        input,
-        output,
-        queries,
-        levels,
-        quantiles,
-        progress,
-        save_state,
-        load_state,
-        min_confidence,
-        confidence_intervals,
-        diagnostics,
-        visualize,
-        format="csv",
-        seed=None,
-    ):
-        self.input = input
-        self.output = output
-        self.queries = queries
-        self.levels = levels
-        self.quantiles = quantiles
-        self.progress = progress
-        self.save_state = save_state
-        self.load_state = load_state
-        self.min_confidence = min_confidence
-        self.confidence_intervals = confidence_intervals
-        self.diagnostics = diagnostics
-        self.visualize = visualize
-        self.format = format
-        self.seed = seed
+    input: str
+    output: Optional[str]
+    queries: Optional[int]
+    levels: Optional[int]
+    quantiles: Optional[str]
+    progress: bool
+    save_state: Optional[str]
+    load_state: Optional[str]
+    min_confidence: float
+    confidence_intervals: bool
+    diagnostics: bool
+    visualize: bool
+    format: str = "csv"
+    seed: Optional[int] = None
 
 
 @click.command()
@@ -144,20 +131,20 @@ def main(
     seed: Optional[int],
 ) -> None:
     config: Config = Config(
-        input_file,
-        output,
-        queries,
-        levels,
-        quantiles,
-        progress,
-        save_state,
-        load_state,
-        min_confidence,
-        confidence_intervals,
-        diagnostics,
-        visualize,
-        format,
-        seed,
+        input=input_file,
+        output=output,
+        queries=queries,
+        levels=levels,
+        quantiles=quantiles,
+        progress=progress,
+        save_state=save_state,
+        load_state=load_state,
+        min_confidence=min_confidence,
+        confidence_intervals=confidence_intervals,
+        diagnostics=diagnostics,
+        visualize=visualize,
+        format=format,
+        seed=seed,
     )
 
     try:
