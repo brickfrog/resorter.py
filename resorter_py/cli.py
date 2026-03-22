@@ -14,6 +14,7 @@ from .ranker import (
     assign_levels,
     assign_custom_quantiles,
 )
+from . import __version__
 
 
 class Config:
@@ -51,7 +52,7 @@ class Config:
 
 
 @click.command()
-@click.version_option(package_name="resorter-py")
+@click.version_option(__version__)
 @click.option(
     "--input",
     "input_file",
