@@ -293,7 +293,10 @@ class BradleyTerryRanker:
         self,
         items: Sequence[Union[int, str]],
         scores: Optional[Mapping[Any, Union[int, float]]] = None,
+        seed: Optional[int] = None,
     ) -> None:
+        if seed is not None:
+            np.random.seed(seed)
         self.items: Sequence[Union[int, str]] = items
         self.item_to_idx = {item: i for i, item in enumerate(items)}
         self.idx_to_item = {i: item for i, item in enumerate(items)}

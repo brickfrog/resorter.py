@@ -14,6 +14,7 @@ def example_llm_response(item_a: str, item_b: str) -> int:
             print("\nInput interrupted. Exiting.")
             raise SystemExit(1)
 
+
 def main():
     # Initialize the ranker with some test items
     items = ["The Matrix", "Inception", "Interstellar", "The Dark Knight"]
@@ -35,13 +36,12 @@ def main():
 
         # Submit the answer back to the ranker
         model.update_single_query(item_a, item_b, response)
-        
+
         # Show current rankings after each comparison
         print("\nCurrent Rankings:")
-        # Use direct API methods for ranks and confidence
         ranks = model.compute_ranks()
         confidences = model.get_ranking_confidence()
-        
+
         for item, rank in sorted(ranks.items(), key=lambda x: x[1], reverse=True):
             confidence = confidences[item]
             print(f"{item}: {rank:.3f} (confidence: {confidence:.1%})")

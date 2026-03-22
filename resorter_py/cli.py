@@ -2,6 +2,7 @@ import click
 import csv
 import sys
 import json
+import numpy as np
 from typing import Optional, List, Dict, Any
 
 from .ranker import (
@@ -13,41 +14,32 @@ from .ranker import (
     assign_levels,
     assign_custom_quantiles,
 )
+from . import __version__
 
 
+from dataclasses import dataclass
+
+
+@dataclass
 class Config:
-    def __init__(
-        self,
-        input,
-        output,
-        queries,
-        levels,
-        quantiles,
-        progress,
-        save_state,
-        load_state,
-        min_confidence,
-        confidence_intervals,
-        diagnostics,
-        visualize,
-        format="csv",
-    ):
-        self.input = input
-        self.output = output
-        self.queries = queries
-        self.levels = levels
-        self.quantiles = quantiles
-        self.progress = progress
-        self.save_state = save_state
-        self.load_state = load_state
-        self.min_confidence = min_confidence
-        self.confidence_intervals = confidence_intervals
-        self.diagnostics = diagnostics
-        self.visualize = visualize
-        self.format = format
+    input: str
+    output: Optional[str]
+    queries: Optional[int]
+    levels: Optional[int]
+    quantiles: Optional[str]
+    progress: bool
+    save_state: Optional[str]
+    load_state: Optional[str]
+    min_confidence: float
+    confidence_intervals: bool
+    diagnostics: bool
+    visualize: bool
+    format: str = "csv"
+    seed: Optional[int] = None
 
 
 @click.command()
+@click.version_option(__version__)
 @click.option(
     "--input",
     "input_file",
@@ -119,6 +111,12 @@ class Config:
     default="csv",
     help="Output format for the rankings",
 )
+@click.option(
+    "--seed",
+    default=None,
+    type=int,
+    help="Seed for random number generation to ensure reproducibility",
+)
 def main(
     input_file: str,
     output: str,
@@ -133,21 +131,25 @@ def main(
     diagnostics: bool,
     visualize: bool,
     format: str,
+    seed: Optional[int],
 ) -> None:
+    if seed is not None:
+        np.random.seed(seed)
     config: Config = Config(
-        input_file,
-        output,
-        queries,
-        levels,
-        quantiles,
-        progress,
-        save_state,
-        load_state,
-        min_confidence,
-        confidence_intervals,
-        diagnostics,
-        visualize,
-        format,
+        input=input_file,
+        output=output,
+        queries=queries,
+        levels=levels,
+        quantiles=quantiles,
+        progress=progress,
+        save_state=save_state,
+        load_state=load_state,
+        min_confidence=min_confidence,
+        confidence_intervals=confidence_intervals,
+        diagnostics=diagnostics,
+        visualize=visualize,
+        format=format,
+        seed=seed,
     )
 
     try:

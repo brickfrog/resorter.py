@@ -1,3 +1,5 @@
+from importlib.metadata import PackageNotFoundError, version
+
 from .ranker import (
     BradleyTerryRanker,
     StateValidationError,
@@ -8,7 +10,10 @@ from .ranker import (
     assign_custom_quantiles,
 )
 
-__version__ = "0.1.0"
+try:
+    __version__ = version("resorter-py")
+except PackageNotFoundError:
+    __version__ = "unknown"
 __all__ = [
     "BradleyTerryRanker",
     "StateValidationError",
