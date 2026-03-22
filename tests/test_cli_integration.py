@@ -3,6 +3,15 @@ import os
 import pytest
 from click.testing import CliRunner
 from resorter_py.cli import main
+from resorter_py import __version__
+
+
+def test_cli_version():
+    """Check that --version returns the correct version string."""
+    runner = CliRunner()
+    result = runner.invoke(main, ["--version"])
+    assert result.exit_code == 0
+    assert __version__ in result.output
 
 def test_cli_interactive_ranking(tmp_path):
     """Scenario 1: One short interactive ranking run."""
@@ -121,22 +130,22 @@ def test_cli_reproducibility(tmp_path):
     # Need enough items to have some randomization in get_most_informative_pair
     items = ["Apple", "Banana", "Cherry", "Date", "Elderberry", "Fig", "Grape"]
     input_file.write_text("\n".join(items))
-    
+
     runner = CliRunner()
-    
+
     # Run 1
     # We provide a fixed sequence of inputs
-    # Need enough inputs for ~15-20 queries. 
+    # Need enough inputs for ~15-20 queries.
     inputs = "1\n2\n3\n" * 10
     result1 = runner.invoke(main, ["--input", str(input_file), "--seed", "42"], input=inputs)
     assert result1.exit_code == 0
     comp1, rank1 = extract_deterministic_output(result1.output)
-    
+
     # Run 2 with same seed
     result2 = runner.invoke(main, ["--input", str(input_file), "--seed", "42"], input=inputs)
     assert result2.exit_code == 0
     comp2, rank2 = extract_deterministic_output(result2.output)
-    
+
     # The comparison sequence and final rankings should be identical
     assert comp1 == comp2
     assert rank1 == rank2

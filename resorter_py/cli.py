@@ -2,6 +2,7 @@ import click
 import csv
 import sys
 import json
+import numpy as np
 from typing import Optional, List, Dict, Any
 
 from .ranker import (
@@ -13,6 +14,7 @@ from .ranker import (
     assign_levels,
     assign_custom_quantiles,
 )
+from . import __version__
 
 
 from dataclasses import dataclass
@@ -37,6 +39,7 @@ class Config:
 
 
 @click.command()
+@click.version_option(__version__)
 @click.option(
     "--input",
     "input_file",
@@ -130,6 +133,8 @@ def main(
     format: str,
     seed: Optional[int],
 ) -> None:
+    if seed is not None:
+        np.random.seed(seed)
     config: Config = Config(
         input=input_file,
         output=output,
@@ -156,10 +161,6 @@ def main(
     items, scores = parse_input(rows)
     num_queries: int = determine_queries(items, config.queries)
     print(f"Number of queries: {num_queries}")
-
-    if config.seed is not None:
-        import numpy as np
-        np.random.seed(config.seed)
 
     model = BradleyTerryRanker(items, scores)
     if config.load_state:
