@@ -223,6 +223,7 @@ def test_config():
         diagnostics=True,
         visualize=True,
         format="csv",
+        seed=42,
     )
     assert config.input == "test.csv"
     assert config.output == "out.csv"
@@ -237,6 +238,20 @@ def test_config():
     assert config.diagnostics is True
     assert config.visualize is True
     assert config.format == "csv"
+    assert config.seed == 42
+
+
+def test_reproducibility():
+    items = ["A", "B", "C", "D"]
+    seed = 42
+    model1 = BradleyTerryRanker(items, seed=seed)
+    model2 = BradleyTerryRanker(items, seed=seed)
+    
+    assert np.array_equal(model1.strengths, model2.strengths)
+    
+    # Also verify that it's different with a different seed
+    model3 = BradleyTerryRanker(items, seed=43)
+    assert not np.array_equal(model1.strengths, model3.strengths)
 
 
 def test_save_load_state(sample_model, tmp_path):
@@ -611,3 +626,59 @@ class TestStateValidation:
 
     def test_state_validation_error_is_value_error(self):
         assert issubclass(StateValidationError, ValueError)
+
+
+def test_compute_ordinal_rankings(sample_model):
+    # Setup A > B > C > D
+    sample_model.update_single_query("A", "B", 1)
+    sample_model.update_single_query("B", "C", 1)
+    sample_model.update_single_query("C", "D", 1)
+
+    rankings = sample_model.compute_ordinal_rankings()
+    assert rankings["A"] == 1
+    assert rankings["B"] == 2
+    assert rankings["C"] == 3
+    assert rankings["D"] == 4
+
+
+def test_get_confidence_intervals(sample_model):
+    # Need some comparisons
+    sample_model.update_single_query("A", "B", 1)
+    sample_model.update_single_query("B", "C", 1)
+    sample_model.update_single_query("C", "D", 1)
+
+    ci = sample_model.get_confidence_intervals()
+    assert isinstance(ci, dict)
+    for item in sample_model.items:
+        lower, upper = ci[item]
+        assert lower < upper
+
+
+def test_visualize_rankings(sample_model, capsys):
+    sample_model.update_single_query("A", "B", 1)
+    sample_model.visualize_rankings()
+    captured = capsys.readouterr()
+    assert "Ranking visualization:" in captured.out
+    for item in sample_model.items:
+        assert str(item) in captured.out
+    assert "#" in captured.out
+
+
+def test_model_diagnostics(sample_model):
+    # 3 comparisons
+    sample_model.update_single_query("A", "B", 1)
+    sample_model.update_single_query("B", "C", 1)
+    sample_model.update_single_query("C", "D", 1)
+
+    diagnostics = sample_model.model_diagnostics()
+    required_keys = {
+        "log_likelihood",
+        "aic",
+        "deviance",
+        "n_comparisons",
+        "mean_strength",
+        "strength_variance",
+    }
+    assert all(key in diagnostics for key in required_keys)
+    assert diagnostics["n_comparisons"] == 3
+
