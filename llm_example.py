@@ -13,17 +13,19 @@ def example_llm_response(item_a: str, item_b: str) -> int:
         except (EOFError, KeyboardInterrupt):
             print("\nInput interrupted. Exiting.")
             raise SystemExit(1)
+
+
 def main():
     # Initialize the ranker with some test items
     items = ["The Matrix", "Inception", "Interstellar", "The Dark Knight"]
-    ranker = BradleyTerryRanker(items)
+    model = BradleyTerryRanker(items)
 
     print("\nStarting comparison sequence...")
     print("We'll compare movies until we reach sufficient confidence in the rankings.")
     
     # Get comparisons one at a time
-    while ranker.should_continue(min_confidence=0.8):
-        item_a, item_b = ranker.get_most_informative_pair()
+    while model.should_continue(min_confidence=0.8):
+        item_a, item_b = model.get_most_informative_pair()
         if item_a is None or item_b is None:  # Done when no more pairs
             break
             
@@ -33,19 +35,20 @@ def main():
         print(f"Response: {response}")
 
         # Submit the answer back to the ranker
-        ranker.update_single_query(item_a, item_b, response)
-        
+        model.update_single_query(item_a, item_b, response)
+
         # Show current rankings after each comparison
         print("\nCurrent Rankings:")
-        rankings = ranker.export_rankings(format='json')
-        # export_rankings(format='json') returns a dict with 'rankings' and 'confidences'
-        for item, rank in rankings['rankings'].items():
-            confidence = rankings['confidences'][item]
+        ranks = model.compute_ranks()
+        confidences = model.get_ranking_confidence()
+
+        for item, rank in sorted(ranks.items(), key=lambda x: x[1], reverse=True):
+            confidence = confidences[item]
             print(f"{item}: {rank:.3f} (confidence: {confidence:.1%})")
 
-    # Get and display final rankings
-    print("\nFinal Rankings:")
-    final_rankings = ranker.export_rankings(format='json')
+    # Get and display final rankings using export_rankings(format='json')
+    print("\nFinal Rankings (from JSON export):")
+    final_rankings = model.export_rankings(format='json')
     for item, rank in final_rankings['rankings'].items():
         confidence = final_rankings['confidences'][item]
         print(f"{item}: {rank:.3f} (confidence: {confidence:.1%})")
