@@ -9,6 +9,7 @@ from resorter_py.ranker import (
     determine_queries,
     assign_levels,
     assign_custom_quantiles,
+    generate_bin_edges,
 )
 from resorter_py.cli import Config
 import random
@@ -611,3 +612,65 @@ class TestStateValidation:
 
     def test_state_validation_error_is_value_error(self):
         assert issubclass(StateValidationError, ValueError)
+
+
+class TestNewMethods:
+    def test_generate_bin_edges(self):
+        data = [1.0, 2.0, 3.0, 4.0, 5.0]
+        # Test levels mode
+        edges_levels = generate_bin_edges(data, levels=2)
+        assert np.array_equal(edges_levels, [1.0, 3.0, 5.0])
+
+        # Test quantiles mode
+        edges_quantiles = generate_bin_edges(data, quantiles=2)
+        assert np.array_equal(edges_quantiles, [1.0, 3.0, 5.0])
+
+        # Test None
+        assert generate_bin_edges(data) is None
+
+    def test_model_diagnostics(self, sample_model):
+        # Initial diagnostics
+        diag = sample_model.model_diagnostics()
+        assert "log_likelihood" in diag
+        assert "aic" in diag
+        assert "deviance" in diag
+
+        # Run some comparisons
+        sample_model.update_single_query("A", "B", 1)
+        sample_model.update_single_query("C", "D", 1)
+
+        diag = sample_model.model_diagnostics()
+        assert diag["n_comparisons"] == 2
+        assert "log_likelihood" in diag
+        assert "aic" in diag
+        assert "deviance" in diag
+
+    def test_compute_ordinal_rankings(self, sample_model):
+        # Set strengths manually for predictable ordering
+        sample_model.strengths = np.array([2.0, 1.0, 0.0, -1.0])
+        # Items: A, B, C, D
+        rankings = sample_model.compute_ordinal_rankings()
+        assert rankings["A"] == 1
+        assert rankings["B"] == 2
+        assert rankings["C"] == 3
+        assert rankings["D"] == 4
+
+    def test_get_confidence_intervals(self, sample_model):
+        # Make some comparisons to get non-infinite intervals
+        for _ in range(5):
+            sample_model.update_single_query("A", "B", 1)
+            sample_model.update_single_query("C", "D", 1)
+            sample_model.update_single_query("A", "C", 1)
+
+        ci = sample_model.get_confidence_intervals()
+        assert len(ci) == 4
+        for item in sample_model.items:
+            lower, upper = ci[item]
+            assert lower < upper
+
+    def test_visualize_rankings(self, sample_model, capsys):
+        sample_model.update_single_query("A", "B", 1)
+        # Just verify it runs without error
+        sample_model.visualize_rankings()
+        captured = capsys.readouterr()
+        assert "Ranking visualization:" in captured.out
