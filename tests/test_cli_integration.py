@@ -101,3 +101,32 @@ def test_cli_edge_cases(tmp_path):
     assert result.exit_code == 0
     assert f"Invalid state file {invalid_state}, starting fresh." in result.output
     assert "Quitting..." in result.output
+
+def test_cli_reproducibility(tmp_path):
+    """Scenario 5: Running with the same seed should produce the same results."""
+    input_file = tmp_path / "items.csv"
+    # Need enough items to have some randomization in get_most_informative_pair
+    items = ["Apple", "Banana", "Cherry", "Date", "Elderberry", "Fig", "Grape"]
+    input_file.write_text("\n".join(items))
+    
+    runner = CliRunner()
+    
+    # Run 1
+    # We provide a fixed sequence of inputs
+    # Need enough inputs for ~15-20 queries. 
+    inputs = "1\n2\n3\n" * 10
+    result1 = runner.invoke(main, ["--input", str(input_file), "--seed", "42"], input=inputs)
+    assert result1.exit_code == 0
+    
+    # Run 2 with same seed
+    result2 = runner.invoke(main, ["--input", str(input_file), "--seed", "42"], input=inputs)
+    assert result2.exit_code == 0
+    
+    # The outputs should be identical (specifically the sequence of comparisons and final ranks)
+    assert result1.output == result2.output
+
+    # Run 3 with different seed - should likely produce different comparison sequence
+    result3 = runner.invoke(main, ["--input", str(input_file), "--seed", "43"], input=inputs)
+    assert result3.exit_code == 0
+    # While it's *possible* it's the same, with 7 items it's very unlikely.
+    assert result1.output != result3.output

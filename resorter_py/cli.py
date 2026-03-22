@@ -31,6 +31,7 @@ class Config:
         diagnostics,
         visualize,
         format="csv",
+        seed=None,
     ):
         self.input = input
         self.output = output
@@ -45,6 +46,7 @@ class Config:
         self.diagnostics = diagnostics
         self.visualize = visualize
         self.format = format
+        self.seed = seed
 
 
 @click.command()
@@ -119,6 +121,12 @@ class Config:
     default="csv",
     help="Output format for the rankings",
 )
+@click.option(
+    "--seed",
+    default=None,
+    type=int,
+    help="Seed for random number generation to ensure reproducibility",
+)
 def main(
     input_file: str,
     output: str,
@@ -133,6 +141,7 @@ def main(
     diagnostics: bool,
     visualize: bool,
     format: str,
+    seed: Optional[int],
 ) -> None:
     config: Config = Config(
         input_file,
@@ -148,6 +157,7 @@ def main(
         diagnostics,
         visualize,
         format,
+        seed,
     )
 
     try:
@@ -159,6 +169,10 @@ def main(
     items, scores = parse_input(rows)
     num_queries: int = determine_queries(items, config.queries)
     print(f"Number of queries: {num_queries}")
+
+    if config.seed is not None:
+        import numpy as np
+        np.random.seed(config.seed)
 
     model = BradleyTerryRanker(items, scores)
     if config.load_state:
